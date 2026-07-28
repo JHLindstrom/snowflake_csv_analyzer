@@ -15,6 +15,13 @@ def _get_read_sql(file_path: str) -> str:
         return f"read_parquet('{clean_path}')"
     return f"read_csv_auto('{clean_path}', header=True)"
 
+def _get_split_sql(file_path: str, delimiter: str, dedupe_mode: Optional[str] = None) -> str:
+    clean_delim = delimiter.replace("'", "''")
+    path_expr = "EVENT_PATH"
+    if dedupe_mode:
+        path_expr = sanitize_event_path_sql("EVENT_PATH", delimiter=delimiter, mode=dedupe_mode)
+    return f"list_transform(string_split({path_expr}, '{clean_delim}'), x -> trim(x))"
+
 def detect_delimiter(file_path: str) -> str:
     """
     Auto-detects the event path delimiter (->, ,, >, |) from sample rows.
@@ -38,24 +45,46 @@ def detect_delimiter(file_path: str) -> str:
         pass
     return "->"
 
-def _get_split_sql(file_path: str, delimiter: str) -> str:
-    clean_path = file_path.replace("'", "''")
+def sanitize_event_path_sql(column_name: str = "EVENT_PATH", delimiter: str = "->", mode: str = "consecutive") -> str:
+    """
+    Returns SQL expression to sanitize EVENT_PATH strings.
+    - 'consecutive': Collapses repeated adjacent events (A->A->A -> A)
+    - 'unique': Keeps only unique events per session
+    """
     clean_delim = delimiter.replace("'", "''")
-    read_sql = _get_read_sql(file_path)
-    return f"list_transform(string_split(EVENT_PATH, '{clean_delim}'), x -> trim(x))"
+    split_list = f"list_transform(string_split({column_name}, '{clean_delim}'), x -> trim(x))"
+    
+    if mode == "consecutive":
+        # Pure DuckDB list operation: filter out elements where event[i] == event[i-1]
+        dedupe_expr = f"""
+        list_filter(
+            list_transform(
+                generate_series(1, len({split_list})),
+                i -> CASE WHEN i = 1 OR {split_list}[i] != {split_list}[i-1] THEN {split_list}[i] ELSE NULL END
+            ),
+            x -> x IS NOT NULL
+        )
+        """
+        return f"array_to_string({dedupe_expr}, '{clean_delim}')"
+    elif mode == "unique":
+        return f"array_to_string(list_distinct({split_list}), '{clean_delim}')"
+    return column_name
 
-def get_event_frequencies(file_path: str, delimiter: str = "->", top_n: int = 20) -> pd.DataFrame:
+def get_event_frequencies(file_path: str, delimiter: str = "->", top_n: int = 20, dedupe_mode: Optional[str] = None) -> pd.DataFrame:
     """
     Unnests EVENT_PATH by delimiter and calculates individual event frequencies.
     """
     con = duckdb.connect(database=":memory:")
     read_sql = _get_read_sql(file_path)
     clean_delim = delimiter.replace("'", "''")
+    path_expr = "EVENT_PATH"
+    if dedupe_mode and dedupe_mode != "none":
+        path_expr = sanitize_event_path_sql("EVENT_PATH", delimiter=delimiter, mode=dedupe_mode)
     
     query = f"""
     WITH unnested AS (
         SELECT 
-            unnest(string_split(EVENT_PATH, '{clean_delim}')) AS event_name
+            unnest(string_split({path_expr}, '{clean_delim}')) AS event_name
         FROM {read_sql}
         WHERE EVENT_PATH IS NOT NULL
     )
@@ -73,16 +102,19 @@ def get_event_frequencies(file_path: str, delimiter: str = "->", top_n: int = 20
     con.close()
     return df
 
-def get_top_paths(file_path: str, top_n: int = 15, min_events: int = 1) -> pd.DataFrame:
+def get_top_paths(file_path: str, top_n: int = 15, min_events: int = 1, dedupe_mode: Optional[str] = None) -> pd.DataFrame:
     """
     Ranks the most frequent full user navigation paths in high-speed DuckDB SQL.
     """
     con = duckdb.connect(database=":memory:")
     read_sql = _get_read_sql(file_path)
+    path_expr = "EVENT_PATH"
+    if dedupe_mode and dedupe_mode != "none":
+        path_expr = sanitize_event_path_sql("EVENT_PATH", mode=dedupe_mode)
     
     query = f"""
     SELECT 
-        EVENT_PATH AS full_path,
+        {path_expr} AS full_path,
         TOTAL_EVENTS,
         COUNT(*) AS session_count,
         ROUND(COUNT(*) * 100.0 / (SELECT COUNT(*) FROM {read_sql}), 2) AS share_percent
@@ -96,19 +128,22 @@ def get_top_paths(file_path: str, top_n: int = 15, min_events: int = 1) -> pd.Da
     con.close()
     return df
 
-def get_transition_pairs(file_path: str, delimiter: str = "->", top_n: int = 20) -> pd.DataFrame:
+def get_transition_pairs(file_path: str, delimiter: str = "->", top_n: int = 20, dedupe_mode: Optional[str] = None) -> pd.DataFrame:
     """
     Calculates step-to-step event transition pairs (e.g. Step A -> Step B).
     """
     con = duckdb.connect(database=":memory:")
     read_sql = _get_read_sql(file_path)
     clean_delim = delimiter.replace("'", "''")
+    path_expr = "EVENT_PATH"
+    if dedupe_mode and dedupe_mode != "none":
+        path_expr = sanitize_event_path_sql("EVENT_PATH", delimiter=delimiter, mode=dedupe_mode)
     
     query = f"""
     WITH split_events AS (
         SELECT 
             SESSION,
-            string_split(EVENT_PATH, '{clean_delim}') AS events
+            string_split({path_expr}, '{clean_delim}') AS events
         FROM {read_sql}
         WHERE EVENT_PATH IS NOT NULL
     ),
@@ -139,6 +174,7 @@ def calculate_funnel(
     steps: List[str], 
     delimiter: str = "->",
     sequential: bool = True,
+    dedupe_mode: Optional[str] = None,
     progress_callback = None
 ) -> pd.DataFrame:
     """
@@ -149,7 +185,7 @@ def calculate_funnel(
 
     con = duckdb.connect(database=":memory:")
     read_sql = _get_read_sql(file_path)
-    split_sql = _get_split_sql(file_path, delimiter)
+    split_sql = _get_split_sql(file_path, delimiter, dedupe_mode=dedupe_mode)
     clean_steps = [s.strip() for s in steps]
     total_steps = len(clean_steps)
     

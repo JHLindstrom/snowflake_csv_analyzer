@@ -107,9 +107,10 @@ def handle_convert(args):
 
 def handle_analyze(args):
     console.print(f"\n[bold cyan]📈 Analyzing Event Path Data: {args.file_path}[/bold cyan]")
+    dedupe_mode = getattr(args, 'dedupe', 'consecutive')
     
     # 1. Event Frequencies
-    freq_df = get_event_frequencies(args.file_path, delimiter=args.delimiter, top_n=args.top)
+    freq_df = get_event_frequencies(args.file_path, delimiter=args.delimiter, top_n=args.top, dedupe_mode=dedupe_mode)
     freq_table = Table(title=f"Top {len(freq_df)} Individual Events", show_header=True, header_style="bold blue")
     freq_table.add_column("Rank", justify="right", style="dim")
     freq_table.add_column("Event Name", style="bold yellow")
@@ -121,7 +122,7 @@ def handle_analyze(args):
     console.print(freq_table)
 
     # 2. Transition Pairs
-    trans_df = get_transition_pairs(args.file_path, delimiter=args.delimiter, top_n=args.top)
+    trans_df = get_transition_pairs(args.file_path, delimiter=args.delimiter, top_n=args.top, dedupe_mode=dedupe_mode)
     trans_table = Table(title=f"Top Step Transitions (Event A -> Event B)", show_header=True, header_style="bold green")
     trans_table.add_column("Rank", justify="right", style="dim")
     trans_table.add_column("Transition Pair", style="bold yellow")
@@ -132,7 +133,7 @@ def handle_analyze(args):
     console.print(trans_table)
 
     # 3. Top Full Paths
-    paths_df = get_top_paths(args.file_path, top_n=10)
+    paths_df = get_top_paths(args.file_path, top_n=10, dedupe_mode=dedupe_mode)
     paths_table = Table(title="Top 10 Full Navigation Paths", show_header=True, header_style="bold magenta")
     paths_table.add_column("Rank", justify="right", style="dim")
     paths_table.add_column("Event Path", style="bold white")
@@ -148,7 +149,7 @@ def handle_analyze(args):
     if args.funnel:
         steps = [s.strip() for s in args.funnel.split(",")]
         console.print(f"\n[bold cyan]📉 Funnel Conversion Analysis for: {' -> '.join(steps)}[/bold cyan]")
-        funnel_df = calculate_funnel(args.file_path, steps, delimiter=args.delimiter)
+        funnel_df = calculate_funnel(args.file_path, steps, delimiter=args.delimiter, dedupe_mode=dedupe_mode)
         
         funnel_table = Table(show_header=True, header_style="bold red")
         funnel_table.add_column("Step #", justify="right", style="dim")
@@ -311,16 +312,19 @@ def handle_run_all(args):
     # Auto-detect Delimiter
     detected_delim = detect_delimiter(parquet_output) if args.delimiter == "->" else args.delimiter
 
+    # Dedupe mode (default 'consecutive' to collapse repeated adjacent events like A->A->A)
+    dedupe_mode = getattr(args, 'dedupe', 'consecutive')
+
     # Auto-detect Top N Events if --funnel is omitted
     funnel_param = args.funnel
     is_sequential = True
     if not funnel_param:
         is_sequential = False  # Use event reach/penetration mode for auto-detected top events
         max_funnel_depth = min(args.top, 8)
-        freq_df = get_event_frequencies(parquet_output, delimiter=detected_delim, top_n=max_funnel_depth)
+        freq_df = get_event_frequencies(parquet_output, delimiter=detected_delim, top_n=max_funnel_depth, dedupe_mode=dedupe_mode)
         top_events = freq_df['event_name'].tolist() if not freq_df.empty else []
         funnel_param = ",".join(top_events)
-        console.print(f"[bold cyan]🔍 Auto-detected Top {len(top_events)} Events (Delimiter: '{detected_delim}'):[/bold cyan] {', '.join(top_events)}\n")
+        console.print(f"[bold cyan]🔍 Auto-detected Top {len(top_events)} Events (Delimiter: '{detected_delim}', Dedupe: '{dedupe_mode}'):[/bold cyan] {', '.join(top_events)}\n")
 
     # Calculate Funnel ONCE with live progress bar
     steps = [s.strip() for s in funnel_param.split(",")]
@@ -336,7 +340,7 @@ def handle_run_all(args):
         task_id = progress.add_task("Calculating Funnel Steps...", total=len(steps))
         def cb(current, total, step_name):
             progress.update(task_id, completed=current, description=f"Analyzing Funnel Step {current}/{total}: '{step_name}'")
-        shared_funnel_df = calculate_funnel(parquet_output, steps, delimiter=detected_delim, sequential=is_sequential, progress_callback=cb)
+        shared_funnel_df = calculate_funnel(parquet_output, steps, delimiter=detected_delim, sequential=is_sequential, dedupe_mode=dedupe_mode, progress_callback=cb)
 
     # Step 3: Executive Insights & KPIs
     console.print("[bold yellow]3/5. Generating Executive Session Insights...[/bold yellow]")
@@ -386,6 +390,7 @@ def main():
     analyze_p.add_argument("-d", "--delimiter", default="->", help="Event path separator token")
     analyze_p.add_argument("-t", "--top", type=int, default=15, help="Number of top events/transitions to display")
     analyze_p.add_argument("-f", "--funnel", help="Comma-separated funnel steps (e.g. 'Home,Product_View,Checkout')")
+    analyze_p.add_argument("-u", "--dedupe", default="consecutive", choices=["none", "consecutive", "unique"], help="Event deduplication mode")
 
     # Subcommand: search
     search_p = subparsers.add_parser("search", help="Search sessions matching event filters")
@@ -412,12 +417,14 @@ def main():
     heatmap_p.add_argument("-t", "--top", type=int, default=8, help="Top N events to display in matrix")
     heatmap_p.add_argument("--html", help="Optional HTML report output file path (e.g. 'pm_report.html')")
     heatmap_p.add_argument("-f", "--funnel", help="Optional comma-separated funnel steps for HTML report")
+    heatmap_p.add_argument("-u", "--dedupe", default="consecutive", choices=["none", "consecutive", "unique"], help="Event deduplication mode")
 
     # Subcommand: drop-offs
     drop_p = subparsers.add_parser("drop-offs", help="Visual funnel bar chart with retention & drop-off alerts")
     drop_p.add_argument("file_path", help="CSV or Parquet filepath")
     drop_p.add_argument("-f", "--funnel", required=True, help="Comma-separated funnel steps (e.g. 'Home,Product_View,Checkout')")
     drop_p.add_argument("-d", "--delimiter", default="->", help="Event path separator token")
+    drop_p.add_argument("-u", "--dedupe", default="consecutive", choices=["none", "consecutive", "unique"], help="Event deduplication mode")
 
     # Subcommand: run-all
     run_all_p = subparsers.add_parser("run-all", help="Run full pipeline: inspect CSV -> convert to Parquet -> insights -> heatmap -> visual drop-offs -> HTML report")
@@ -426,6 +433,7 @@ def main():
     run_all_p.add_argument("-d", "--delimiter", default="->", help="Event path separator token")
     run_all_p.add_argument("-t", "--top", type=int, default=15, help="Number of top events to analyze")
     run_all_p.add_argument("-f", "--funnel", help="Comma-separated funnel steps (e.g. 'Home,Product_View,Checkout')")
+    run_all_p.add_argument("-u", "--dedupe", default="consecutive", choices=["none", "consecutive", "unique"], help="Event deduplication mode: 'consecutive' (default), 'unique', 'none'")
     run_all_p.add_argument("--html", help="Optional output HTML report filepath")
     run_all_p.add_argument("-c", "--compression", default="ZSTD", choices=["ZSTD", "SNAPPY", "GZIP", "UNCOMPRESSED"], help="Parquet compression algorithm")
 
