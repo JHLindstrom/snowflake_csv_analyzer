@@ -22,6 +22,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskPr
 from generate_mock_data import generate_csv
 from converter import convert_csv_to_parquet, inspect_file
 from event_parser import (
+    detect_delimiter,
     get_event_frequencies,
     get_top_paths,
     get_transition_pairs,
@@ -307,14 +308,19 @@ def handle_run_all(args):
     handle_convert(argparse.Namespace(csv_file=args.csv_file, output=parquet_output, compression=args.compression))
     console.print("\n" + "─"*60 + "\n")
 
-    # Auto-detect Top N Funnel Events if --funnel is omitted (default max 8 steps for instant speed)
+    # Auto-detect Delimiter
+    detected_delim = detect_delimiter(parquet_output) if args.delimiter == "->" else args.delimiter
+
+    # Auto-detect Top N Events if --funnel is omitted
     funnel_param = args.funnel
+    is_sequential = True
     if not funnel_param:
+        is_sequential = False  # Use event reach/penetration mode for auto-detected top events
         max_funnel_depth = min(args.top, 8)
-        freq_df = get_event_frequencies(parquet_output, delimiter=args.delimiter, top_n=max_funnel_depth)
+        freq_df = get_event_frequencies(parquet_output, delimiter=detected_delim, top_n=max_funnel_depth)
         top_events = freq_df['event_name'].tolist() if not freq_df.empty else []
         funnel_param = ",".join(top_events)
-        console.print(f"[bold cyan]🔍 Auto-detected Top {len(top_events)} Events for Funnel Analysis:[/bold cyan] {', '.join(top_events)}\n")
+        console.print(f"[bold cyan]🔍 Auto-detected Top {len(top_events)} Events (Delimiter: '{detected_delim}'):[/bold cyan] {', '.join(top_events)}\n")
 
     # Calculate Funnel ONCE with live progress bar
     steps = [s.strip() for s in funnel_param.split(",")]
@@ -330,22 +336,22 @@ def handle_run_all(args):
         task_id = progress.add_task("Calculating Funnel Steps...", total=len(steps))
         def cb(current, total, step_name):
             progress.update(task_id, completed=current, description=f"Analyzing Funnel Step {current}/{total}: '{step_name}'")
-        shared_funnel_df = calculate_funnel(parquet_output, steps, delimiter=args.delimiter, progress_callback=cb)
+        shared_funnel_df = calculate_funnel(parquet_output, steps, delimiter=detected_delim, sequential=is_sequential, progress_callback=cb)
 
     # Step 3: Executive Insights & KPIs
     console.print("[bold yellow]3/5. Generating Executive Session Insights...[/bold yellow]")
-    handle_insights(argparse.Namespace(file_path=parquet_output, delimiter=args.delimiter))
+    handle_insights(argparse.Namespace(file_path=parquet_output, delimiter=detected_delim))
     console.print("\n" + "─"*60 + "\n")
 
     # Step 4: Event Transition Heatmap & Interactive HTML Report
     console.print("[bold yellow]4/5. Generating High-Resolution Transition Heatmap & HTML Dashboard...[/bold yellow]")
     html_export = args.html if args.html else f"{os.path.splitext(args.csv_file)[0]}_dashboard.html"
-    handle_heatmap(argparse.Namespace(file_path=parquet_output, delimiter=args.delimiter, top=args.top, html=html_export, funnel=funnel_param), funnel_df=shared_funnel_df)
+    handle_heatmap(argparse.Namespace(file_path=parquet_output, delimiter=detected_delim, top=args.top, html=html_export, funnel=funnel_param), funnel_df=shared_funnel_df)
     console.print("\n" + "─"*60 + "\n")
 
     # Step 5: Visual Drop-Off Report
     console.print("[bold yellow]5/5. Generating Visual Drop-Off & Retention Report...[/bold yellow]")
-    handle_dropoffs(argparse.Namespace(file_path=parquet_output, delimiter=args.delimiter, funnel=funnel_param), funnel_df=shared_funnel_df)
+    handle_dropoffs(argparse.Namespace(file_path=parquet_output, delimiter=detected_delim, funnel=funnel_param), funnel_df=shared_funnel_df)
 
     abs_report_url = os.path.abspath(html_export)
     console.print(f"\n[bold green]✅ Full Pipeline Execution Complete![/bold green]")

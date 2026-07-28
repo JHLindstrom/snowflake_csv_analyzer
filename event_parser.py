@@ -15,6 +15,35 @@ def _get_read_sql(file_path: str) -> str:
         return f"read_parquet('{clean_path}')"
     return f"read_csv_auto('{clean_path}', header=True)"
 
+def detect_delimiter(file_path: str) -> str:
+    """
+    Auto-detects the event path delimiter (->, ,, >, |) from sample rows.
+    """
+    try:
+        con = duckdb.connect(database=":memory:")
+        read_sql = _get_read_sql(file_path)
+        sample = con.execute(f"SELECT EVENT_PATH FROM {read_sql} WHERE EVENT_PATH IS NOT NULL AND trim(EVENT_PATH) != '' LIMIT 10").fetchall()
+        con.close()
+        
+        sample_text = " ".join([r[0] for r in sample if r[0]])
+        if "->" in sample_text:
+            return "->"
+        elif "," in sample_text:
+            return ","
+        elif ">" in sample_text:
+            return ">"
+        elif "|" in sample_text:
+            return "|"
+    except Exception:
+        pass
+    return "->"
+
+def _get_split_sql(file_path: str, delimiter: str) -> str:
+    clean_path = file_path.replace("'", "''")
+    clean_delim = delimiter.replace("'", "''")
+    read_sql = _get_read_sql(file_path)
+    return f"list_transform(string_split(EVENT_PATH, '{clean_delim}'), x -> trim(x))"
+
 def get_event_frequencies(file_path: str, delimiter: str = "->", top_n: int = 20) -> pd.DataFrame:
     """
     Unnests EVENT_PATH by delimiter and calculates individual event frequencies.
@@ -109,19 +138,24 @@ def calculate_funnel(
     file_path: str, 
     steps: List[str], 
     delimiter: str = "->",
+    sequential: bool = True,
     progress_callback = None
 ) -> pd.DataFrame:
     """
-    Calculates sequential funnel drop-off metrics using ultra-fast C++ array index comparisons in DuckDB.
+    Calculates session reach or sequential funnel conversion in ultra-fast DuckDB SQL.
     """
     if not steps:
         raise ValueError("Funnel requires at least one step.")
 
     con = duckdb.connect(database=":memory:")
     read_sql = _get_read_sql(file_path)
+    split_sql = _get_split_sql(file_path, delimiter)
     clean_steps = [s.strip() for s in steps]
-    clean_delim = delimiter.replace("'", "''")
     total_steps = len(clean_steps)
+    
+    # Get total sessions count for baseline percent calculation
+    total_sessions = con.execute(f"SELECT COUNT(*) FROM {read_sql}").fetchone()[0]
+    total_sessions = total_sessions if total_sessions > 0 else 1
     
     funnel_data = []
     first_count = None
@@ -133,20 +167,24 @@ def calculate_funnel(
             
         sub_sequence = clean_steps[:idx+1]
         
-        # Build ultra-fast array position conditions (e.g., pos(Step1) > 0 AND pos(Step2) > pos(Step1)...)
-        conds = []
-        for i in range(len(sub_sequence)):
-            curr_step = sub_sequence[i].replace("'", "''")
-            conds.append(f"list_position(events, '{curr_step}') > 0")
-            if i > 0:
-                prev_step = sub_sequence[i-1].replace("'", "''")
-                conds.append(f"list_position(events, '{curr_step}') > list_position(events, '{prev_step}')")
-                
-        where_expr = " AND ".join(conds)
+        if sequential and len(sub_sequence) > 1:
+            # Sequential mode: Step N must occur after Step N-1
+            conds = []
+            for i in range(len(sub_sequence)):
+                curr_step = sub_sequence[i].replace("'", "''")
+                conds.append(f"list_position(events, '{curr_step}') > 0")
+                if i > 0:
+                    prev_step = sub_sequence[i-1].replace("'", "''")
+                    conds.append(f"list_position(events, '{curr_step}') > list_position(events, '{prev_step}')")
+            where_expr = " AND ".join(conds)
+        else:
+            # Independent reach / Step 1 mode: Session contains current step
+            curr_step = step.replace("'", "''")
+            where_expr = f"list_position(events, '{curr_step}') > 0"
         
         sql = f"""
         WITH split_events AS (
-            SELECT string_split(EVENT_PATH, '{clean_delim}') AS events
+            SELECT {split_sql} AS events
             FROM {read_sql}
             WHERE EVENT_PATH IS NOT NULL
         )
@@ -160,8 +198,8 @@ def calculate_funnel(
         if idx == 0:
             first_count = cnt
             prev_count = cnt
-            conversion_pct = 100.0 if cnt > 0 else 0.0
-            dropoff_pct = 0.0
+            conversion_pct = round((cnt / total_sessions) * 100, 2)
+            dropoff_pct = round(100.0 - conversion_pct, 2)
         else:
             conversion_pct = round((cnt / prev_count) * 100, 2) if prev_count > 0 else 0.0
             dropoff_pct = round(100.0 - conversion_pct, 2)
