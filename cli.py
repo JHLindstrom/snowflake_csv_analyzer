@@ -44,10 +44,11 @@ console = Console()
 
 def display_banner():
     banner = """
-    [bold cyan]❄️  Snowflake Session CSV & Parquet Analyzer[/bold cyan]
+    [bold cyan]🔱 TRISHULA (त्रिशूल)[/bold cyan]
+    [bold yellow]Trident Engine for Large-Scale Session & Funnel Analytics[/bold yellow]
     [dim]Out-of-core streaming analytics engine powered by DuckDB & Polars[/dim]
     """
-    console.print(Panel(banner, border_style="cyan"))
+    console.print(Panel(banner, border_style="cyan", expand=False))
 
 def handle_generate_mock(args):
     console.print(f"[bold yellow][*] Generating mock data ({args.rows:,} rows)...[/bold yellow]")

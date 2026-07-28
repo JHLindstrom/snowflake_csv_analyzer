@@ -176,7 +176,7 @@ def export_html_report(
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Snowflake Analytics Dashboard</title>
+    <title>Trishula Analytics Dashboard</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         :root {{ --bg: #0f172a; --card-bg: #1e293b; --text: #f8fafc; --accent: #38bdf8; --border: #334155; }}
@@ -202,8 +202,8 @@ def export_html_report(
 <body>
     <div class="header">
         <div>
-            <h1>❄️ Snowflake Session Analytics Dashboard</h1>
-            <p>High-Resolution Interactive Product & Conversion Insights Report</p>
+            <h1>🔱 TRISHULA (त्रिशूल)</h1>
+            <p>Trident Session Analytics & High-Resolution Funnel Dashboard</p>
         </div>
         <button class="btn-print" onclick="window.print()">Print / Export PDF</button>
     </div>

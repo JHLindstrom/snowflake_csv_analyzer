@@ -1,6 +1,12 @@
-# ❄️ Snowflake CSV & Parquet Data Parser & Analyzer
+# 🔱 TRISHULA (त्रिशूल)
+### Trident Engine for Large-Scale Session & Funnel Analytics
 
-A high-performance Python tool designed to stream, convert, parse, and analyze multi-gigabyte Snowflake CSV exports (7.2GB+) using DuckDB and Polars to maintain zero memory overflow.
+A high-performance Python engine designed to stream, convert, parse, and analyze multi-gigabyte Snowflake CSV exports (7.2GB+) using DuckDB and Polars to maintain zero memory overflow.
+
+Named after the divine trident (**Trishula**), representing three unified pillars of analytical power:
+1. **Out-of-Core Parquet Conversion** (Fast streaming from disk)
+2. **Transition Matrix Heatmaps** (Visualizing flow intensity between events)
+3. **Funnel Retention & Drop-off Intelligence** (Identifying friction bottlenecks)
 
 ---
 
