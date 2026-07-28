@@ -278,10 +278,11 @@ def handle_run_all(args):
     handle_convert(argparse.Namespace(csv_file=args.csv_file, output=parquet_output, compression=args.compression))
     console.print("\n" + "─"*60 + "\n")
 
-    # Auto-detect Top N Funnel Events if --funnel is omitted
+    # Auto-detect Top N Funnel Events if --funnel is omitted (default max 8 steps for instant speed)
     funnel_param = args.funnel
     if not funnel_param:
-        freq_df = get_event_frequencies(parquet_output, delimiter=args.delimiter, top_n=args.top)
+        max_funnel_depth = min(args.top, 8)
+        freq_df = get_event_frequencies(parquet_output, delimiter=args.delimiter, top_n=max_funnel_depth)
         top_events = freq_df['event_name'].tolist() if not freq_df.empty else []
         funnel_param = ",".join(top_events)
         console.print(f"[bold cyan]🔍 Auto-detected Top {len(top_events)} Events for Funnel Analysis:[/bold cyan] {', '.join(top_events)}\n")
