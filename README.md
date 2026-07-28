@@ -27,7 +27,17 @@ pip install -r requirements.txt
 
 ---
 
-## 🚀 Usage Guide
+## 🚀 Quick Start (1-Step Pipeline)
+
+To run the entire pipeline (inspect CSV, convert to Parquet, verify schema, and run event analytics/funnels) in **one single command**:
+
+```bash
+python3 cli.py run-all /path/to/your_snowflake_data.csv --funnel "Home,Product_View,Add_To_Cart,Checkout,Payment,Order_Confirmation"
+```
+
+---
+
+## 🛠️ Individual Commands
 
 ### 1. Inspect CSV / Parquet File Schema
 ```bash
