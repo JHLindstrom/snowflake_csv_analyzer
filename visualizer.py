@@ -202,7 +202,7 @@ def export_html_report(
 <body>
     <div class="header">
         <div>
-            <h1>🔱 TRISHULA (त्रिशूल)</h1>
+            <h1>🔱 TRISHULA</h1>
             <p>Trident Session Analytics & High-Resolution Funnel Dashboard</p>
         </div>
         <button class="btn-print" onclick="window.print()">Print / Export PDF</button>

@@ -1,7 +1,7 @@
-# 🔱 TRISHULA (त्रिशूल)
+# 🔱 TRISHULA
 ### Trident Engine for Large-Scale Session & Funnel Analytics
 
-**TRISHULA (त्रिशूल)** is a high-performance Python engine designed to stream, convert, parse, sanitize, and analyze multi-gigabyte Snowflake CSV exports (7.2GB+) using **DuckDB** and **Polars** with zero memory overflow.
+**TRISHULA** is a high-performance Python engine designed to stream, convert, parse, sanitize, and analyze multi-gigabyte Snowflake CSV exports (7.2GB+) using **DuckDB** and **Polars** with zero memory overflow.
 
 Named after the divine trident (**Trishula**), representing three unified pillars of analytical power:
 1. **Out-of-Core Parquet Conversion**: Fast streaming disk conversion with zero RAM overflow.

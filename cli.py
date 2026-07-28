@@ -45,7 +45,7 @@ console = Console()
 
 def display_banner():
     banner = """
-    [bold cyan]🔱 TRISHULA (त्रिशूल)[/bold cyan]
+    [bold cyan]🔱 TRISHULA[/bold cyan]
     [bold yellow]Trident Engine for Large-Scale Session & Funnel Analytics[/bold yellow]
     [dim]Out-of-core streaming analytics engine powered by DuckDB & Polars[/dim]
     """
