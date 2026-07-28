@@ -27,6 +27,16 @@ from event_parser import (
     search_sessions,
     run_custom_query
 )
+from insights import (
+    get_entry_exit_analytics,
+    get_executive_summary_metrics,
+    get_transition_matrix
+)
+from visualizer import (
+    render_terminal_heatmap,
+    render_visual_funnel,
+    export_html_report
+)
 
 console = Console()
 
@@ -185,35 +195,105 @@ def handle_query(args):
         table.add_row(*[str(val) for val in row])
     console.print(table)
 
+def handle_insights(args):
+    console.print(f"\n[bold cyan]💡 Executive Session Insights: {args.file_path}[/bold cyan]")
+    
+    # 1. Summary Metrics
+    metrics = get_executive_summary_metrics(args.file_path)
+    table = Table(title="Executive Summary KPIs", show_header=True, header_style="bold magenta")
+    table.add_column("KPI Metric", style="bold")
+    table.add_column("Value", style="yellow")
+    
+    table.add_row("Total Sessions Analyzed", f"{metrics['total_sessions']:,}")
+    table.add_row("Single-Event Bounce Rate", f"{metrics['bounce_rate_pct']}% ({metrics['single_event_bounces']:,} sessions)")
+    table.add_row("Avg Events / Session", str(metrics['avg_events_per_session']))
+    table.add_row("Median Events / Session", str(metrics['median_events']))
+    table.add_row("75th Percentile Session Length", str(metrics['p75_events']))
+    table.add_row("90th Percentile Session Length", str(metrics['p90_events']))
+    table.add_row("Max Events in Session", str(metrics['max_events']))
+    console.print(table)
+    
+    # 2. Entry & Exit Analytics
+    entry_exit = get_entry_exit_analytics(args.file_path, delimiter=args.delimiter, top_n=5)
+    
+    entry_table = Table(title="Top Session Entry Points (Starting Events)", show_header=True, header_style="bold green")
+    entry_table.add_column("Entry Event", style="bold yellow")
+    entry_table.add_column("Sessions", justify="right", style="green")
+    entry_table.add_column("Share (%)", justify="right", style="cyan")
+    for r in entry_exit['entry_points'].itertuples():
+        entry_table.add_row(str(r.event_name), f"{r.entry_count:,}", f"{r.entry_share_pct}%")
+    console.print(entry_table)
+
+    exit_table = Table(title="Top Session Exit Points (Ending / Drop-off Events)", show_header=True, header_style="bold red")
+    exit_table.add_column("Exit Event", style="bold yellow")
+    exit_table.add_column("Sessions", justify="right", style="red")
+    exit_table.add_column("Share (%)", justify="right", style="magenta")
+    for r in entry_exit['exit_points'].itertuples():
+        exit_table.add_row(str(r.event_name), f"{r.exit_count:,}", f"{r.exit_share_pct}%")
+    console.print(exit_table)
+
+def handle_heatmap(args):
+    console.print(f"\n[bold cyan]🔥 Generating Event Transition Heatmap...[/bold cyan]")
+    matrix = get_transition_matrix(args.file_path, delimiter=args.delimiter, top_n=args.top)
+    heatmap_table = render_terminal_heatmap(matrix)
+    console.print(heatmap_table)
+    
+    if args.html:
+        metrics = get_executive_summary_metrics(args.file_path)
+        entry_exit = get_entry_exit_analytics(args.file_path, delimiter=args.delimiter)
+        funnel_df = None
+        if args.funnel:
+            steps = [s.strip() for s in args.funnel.split(",")]
+            funnel_df = calculate_funnel(args.file_path, steps, delimiter=args.delimiter)
+        export_html_report(args.html, metrics, entry_exit['entry_points'], entry_exit['exit_points'], matrix, funnel_df)
+        console.print(f"[bold green]✓ Exported HTML Report to '{args.html}'[/bold green]")
+
+def handle_dropoffs(args):
+    if not args.funnel:
+        console.print("[bold red]Error: --funnel parameter required for drop-off analysis (e.g. --funnel 'Home,Product_View,Checkout')[/bold red]")
+        return
+    steps = [s.strip() for s in args.funnel.split(",")]
+    funnel_df = calculate_funnel(args.file_path, steps, delimiter=args.delimiter)
+    visual_table = render_visual_funnel(funnel_df)
+    console.print(visual_table)
+
 def handle_run_all(args):
     console.print(f"\n[bold green]🚀 Starting Full Automated Pipeline for: {args.csv_file}[/bold green]\n")
     
-    # Auto-generate output parquet path if not specified
     parquet_output = args.output
     if not parquet_output:
         base, _ = os.path.splitext(args.csv_file)
         parquet_output = f"{base}.parquet"
 
     # Step 1: Inspect CSV
-    console.print("[bold yellow]1/4. Inspecting CSV File Schema...[/bold yellow]")
+    console.print("[bold yellow]1/5. Inspecting CSV File Schema...[/bold yellow]")
     handle_inspect(argparse.Namespace(file_path=args.csv_file, limit=3))
     console.print("\n" + "─"*60 + "\n")
 
     # Step 2: Convert CSV to Parquet
-    console.print(f"[bold yellow]2/4. Converting CSV -> Parquet ('{parquet_output}')...[/bold yellow]")
+    console.print(f"[bold yellow]2/5. Converting CSV -> Parquet ('{parquet_output}')...[/bold yellow]")
     handle_convert(argparse.Namespace(csv_file=args.csv_file, output=parquet_output, compression=args.compression))
     console.print("\n" + "─"*60 + "\n")
 
-    # Step 3: Inspect Generated Parquet
-    console.print("[bold yellow]3/4. Verifying Parquet Metadata...[/bold yellow]")
-    handle_inspect(argparse.Namespace(file_path=parquet_output, limit=3))
+    # Step 3: Executive Insights & KPIs
+    console.print("[bold yellow]3/5. Generating Executive Session Insights...[/bold yellow]")
+    handle_insights(argparse.Namespace(file_path=parquet_output, delimiter=args.delimiter))
     console.print("\n" + "─"*60 + "\n")
 
-    # Step 4: Run Analytics & Funnels
-    console.print("[bold yellow]4/4. Running Event Path & Funnel Analytics...[/bold yellow]")
-    handle_analyze(argparse.Namespace(file_path=parquet_output, delimiter=args.delimiter, top=args.top, funnel=args.funnel))
+    # Step 4: Event Transition Heatmap
+    console.print("[bold yellow]4/5. Generating Event Transition Matrix Heatmap...[/bold yellow]")
+    html_export = args.html if args.html else f"{base}_report.html"
+    handle_heatmap(argparse.Namespace(file_path=parquet_output, delimiter=args.delimiter, top=8, html=html_export, funnel=args.funnel))
+    console.print("\n" + "─"*60 + "\n")
 
-    console.print(f"\n[bold green]✅ Full Pipeline Complete! Converted Parquet saved to '{parquet_output}'[/bold green]\n")
+    # Step 5: Visual Drop-Off Report
+    if args.funnel:
+        console.print("[bold yellow]5/5. Generating Visual Drop-Off & Retention Report...[/bold yellow]")
+        handle_dropoffs(argparse.Namespace(file_path=parquet_output, delimiter=args.delimiter, funnel=args.funnel))
+
+    console.print(f"\n[bold green]✅ Full Pipeline Complete![/bold green]")
+    console.print(f"[bold cyan]📁 Parquet Data File: '{parquet_output}'[/bold cyan]")
+    console.print(f"[bold cyan]📊 Interactive PM HTML Report: '{html_export}'[/bold cyan]\n")
 
 def main():
     display_banner()
@@ -256,13 +336,33 @@ def main():
     query_p.add_argument("file_path", help="CSV or Parquet filepath")
     query_p.add_argument("--sql", required=True, help="SQL query string (use 'data' to refer to file table)")
 
+    # Subcommand: insights
+    insights_p = subparsers.add_parser("insights", help="Executive summary metrics: Bounce rate, Entry/Exit points, and session lengths")
+    insights_p.add_argument("file_path", help="CSV or Parquet filepath")
+    insights_p.add_argument("-d", "--delimiter", default="->", help="Event path separator token")
+
+    # Subcommand: heatmap
+    heatmap_p = subparsers.add_parser("heatmap", help="Event transition matrix heatmap and HTML report export")
+    heatmap_p.add_argument("file_path", help="CSV or Parquet filepath")
+    heatmap_p.add_argument("-d", "--delimiter", default="->", help="Event path separator token")
+    heatmap_p.add_argument("-t", "--top", type=int, default=8, help="Top N events to display in matrix")
+    heatmap_p.add_argument("--html", help="Optional HTML report output file path (e.g. 'pm_report.html')")
+    heatmap_p.add_argument("-f", "--funnel", help="Optional comma-separated funnel steps for HTML report")
+
+    # Subcommand: drop-offs
+    drop_p = subparsers.add_parser("drop-offs", help="Visual funnel bar chart with retention & drop-off alerts")
+    drop_p.add_argument("file_path", help="CSV or Parquet filepath")
+    drop_p.add_argument("-f", "--funnel", required=True, help="Comma-separated funnel steps (e.g. 'Home,Product_View,Checkout')")
+    drop_p.add_argument("-d", "--delimiter", default="->", help="Event path separator token")
+
     # Subcommand: run-all
-    run_all_p = subparsers.add_parser("run-all", help="Run full pipeline: inspect CSV -> convert to Parquet -> verify Parquet -> run event analytics & funnels")
+    run_all_p = subparsers.add_parser("run-all", help="Run full pipeline: inspect CSV -> convert to Parquet -> insights -> heatmap -> visual drop-offs -> HTML report")
     run_all_p.add_argument("csv_file", help="Input CSV filepath")
-    run_all_p.add_argument("-o", "--output", help="Optional output Parquet filepath (defaults to <csv_file>.parquet)")
+    run_all_p.add_argument("-o", "--output", help="Optional output Parquet filepath")
     run_all_p.add_argument("-d", "--delimiter", default="->", help="Event path separator token")
-    run_all_p.add_argument("-t", "--top", type=int, default=15, help="Number of top events/transitions to display")
+    run_all_p.add_argument("-t", "--top", type=int, default=15, help="Number of top events to analyze")
     run_all_p.add_argument("-f", "--funnel", help="Comma-separated funnel steps (e.g. 'Home,Product_View,Checkout')")
+    run_all_p.add_argument("--html", help="Optional output HTML report filepath")
     run_all_p.add_argument("-c", "--compression", default="ZSTD", choices=["ZSTD", "SNAPPY", "GZIP", "UNCOMPRESSED"], help="Parquet compression algorithm")
 
     if len(sys.argv) == 1:
@@ -273,6 +373,12 @@ def main():
     
     if args.command == "run-all":
         handle_run_all(args)
+    elif args.command == "insights":
+        handle_insights(args)
+    elif args.command == "heatmap":
+        handle_heatmap(args)
+    elif args.command == "drop-offs":
+        handle_dropoffs(args)
     elif args.command == "generate-mock":
         handle_generate_mock(args)
     elif args.command == "inspect":
