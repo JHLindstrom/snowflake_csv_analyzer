@@ -241,12 +241,15 @@ def handle_heatmap(args):
     if args.html:
         metrics = get_executive_summary_metrics(args.file_path)
         entry_exit = get_entry_exit_analytics(args.file_path, delimiter=args.delimiter)
+        paths_df = get_top_paths(args.file_path, top_n=10)
         funnel_df = None
         if args.funnel:
             steps = [s.strip() for s in args.funnel.split(",")]
             funnel_df = calculate_funnel(args.file_path, steps, delimiter=args.delimiter)
-        export_html_report(args.html, metrics, entry_exit['entry_points'], entry_exit['exit_points'], matrix, funnel_df)
-        console.print(f"[bold green]✓ Exported HTML Report to '{args.html}'[/bold green]")
+            
+        abs_html_path = export_html_report(args.html, metrics, entry_exit['entry_points'], entry_exit['exit_points'], matrix, funnel_df, paths_df)
+        console.print(f"\n[bold green]✨ High-Resolution Dashboard HTML Report Exported![/bold green]")
+        console.print(f"[bold cyan]🔗 Click to open in browser: file://{abs_html_path}[/bold cyan]")
 
 def handle_dropoffs(args):
     if not args.funnel:
@@ -280,9 +283,9 @@ def handle_run_all(args):
     handle_insights(argparse.Namespace(file_path=parquet_output, delimiter=args.delimiter))
     console.print("\n" + "─"*60 + "\n")
 
-    # Step 4: Event Transition Heatmap
-    console.print("[bold yellow]4/5. Generating Event Transition Matrix Heatmap...[/bold yellow]")
-    html_export = args.html if args.html else f"{base}_report.html"
+    # Step 4: Event Transition Heatmap & Interactive HTML Report
+    console.print("[bold yellow]4/5. Generating High-Resolution Transition Heatmap & HTML Dashboard...[/bold yellow]")
+    html_export = args.html if args.html else f"{os.path.splitext(args.csv_file)[0]}_dashboard.html"
     handle_heatmap(argparse.Namespace(file_path=parquet_output, delimiter=args.delimiter, top=8, html=html_export, funnel=args.funnel))
     console.print("\n" + "─"*60 + "\n")
 
@@ -291,9 +294,11 @@ def handle_run_all(args):
         console.print("[bold yellow]5/5. Generating Visual Drop-Off & Retention Report...[/bold yellow]")
         handle_dropoffs(argparse.Namespace(file_path=parquet_output, delimiter=args.delimiter, funnel=args.funnel))
 
-    console.print(f"\n[bold green]✅ Full Pipeline Complete![/bold green]")
-    console.print(f"[bold cyan]📁 Parquet Data File: '{parquet_output}'[/bold cyan]")
-    console.print(f"[bold cyan]📊 Interactive PM HTML Report: '{html_export}'[/bold cyan]\n")
+    abs_report_url = os.path.abspath(html_export)
+    console.print(f"\n[bold green]✅ Full Pipeline Execution Complete![/bold green]")
+    console.print(f"[bold white]📁 Fast Parquet Storage: '{parquet_output}'[/bold white]")
+    console.print(f"[bold yellow]🌐 Click link to view High-Res Report in Browser:[/bold yellow]")
+    console.print(f"[bold cyan]👉 file://{abs_report_url}[/bold cyan]\n")
 
 def main():
     display_banner()
