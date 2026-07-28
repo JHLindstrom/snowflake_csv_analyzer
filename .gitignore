@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+env/
+venv/
+ENV/
+
+# Data Files (Do not commit large CSV/Parquet data)
+*.csv
+*.parquet
+*.pq
+test_synthetic_snowflake.csv
+test_synthetic_snowflake.parquet
+sample_snowflake_data.csv
+
+# macOS
+.DS_Store
