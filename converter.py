@@ -71,19 +71,22 @@ def convert_csv_to_parquet(
 
 def inspect_file(file_path: str, limit: int = 5) -> Dict[str, Any]:
     """
-    Inspects schema and fetches sample rows from CSV or Parquet file.
+    Inspects schema and fetches sample rows from CSV or Parquet file in milliseconds.
     """
     con = duckdb.connect(database=":memory:")
     clean_path = file_path.replace("'", "''")
     
     if file_path.endswith(".parquet") or file_path.endswith(".pq"):
         read_expr = f"read_parquet('{clean_path}')"
+        schema_info = con.execute(f"DESCRIBE SELECT * FROM {read_expr}").fetchall()
+        total_rows = con.execute(f"SELECT COUNT(*) FROM {read_expr}").fetchone()[0]
+        sample_df = con.execute(f"SELECT * FROM {read_expr} LIMIT {limit}").fetchdf()
     else:
         read_expr = f"read_csv_auto('{clean_path}', header=True)"
-
-    schema_info = con.execute(f"DESCRIBE SELECT * FROM {read_expr}").fetchall()
-    total_rows = con.execute(f"SELECT COUNT(*) FROM {read_expr}").fetchone()[0]
-    sample_df = con.execute(f"SELECT * FROM {read_expr} LIMIT {limit}").fetchdf()
+        schema_info = con.execute(f"DESCRIBE SELECT * FROM {read_expr}").fetchall()
+        # Fast sample without full 7.2GB CSV row scan
+        sample_df = con.execute(f"SELECT * FROM {read_expr} LIMIT {limit}").fetchdf()
+        total_rows = "Calculated during conversion"
     
     con.close()
 

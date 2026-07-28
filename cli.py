@@ -57,16 +57,15 @@ def handle_generate_mock(args):
     console.print(f"[bold green]✓ Successfully generated synthetic data at '{args.output}'[/bold green]")
 
 def handle_inspect(args):
-    with Progress(SpinnerColumn(), TextColumn("[bold green]Inspecting file schema...[/bold green]"), transient=True) as progress:
-        progress.add_task("inspect")
-        res = inspect_file(args.file_path, args.limit)
+    res = inspect_file(args.file_path, limit=args.limit)
     
-    console.print(f"\n[bold cyan]📊 File Overview: {args.file_path}[/bold cyan]")
+    console.print(f"\n📊 File Overview: [bold cyan]{args.file_path}[/bold cyan]")
     overview_table = Table(show_header=True, header_style="bold magenta")
     overview_table.add_column("Property", style="bold")
-    overview_table.add_column("Value")
+    overview_table.add_column("Value", style="yellow")
     
-    overview_table.add_row("Total Rows", f"{res['total_rows']:,}")
+    total_rows_str = f"{res['total_rows']:,}" if isinstance(res['total_rows'], int) else str(res['total_rows'])
+    overview_table.add_row("Total Rows", total_rows_str)
     overview_table.add_row("File Size", f"{res['file_size_mb']} MB")
     overview_table.add_row("Columns Count", str(len(res['columns'])))
     console.print(overview_table)
@@ -300,12 +299,7 @@ def handle_run_all(args):
         base, _ = os.path.splitext(args.csv_file)
         parquet_output = f"{base}.parquet"
 
-    # Step 1: Inspect CSV
-    console.print("[bold yellow]1/5. Inspecting CSV File Schema...[/bold yellow]")
-    handle_inspect(argparse.Namespace(file_path=args.csv_file, limit=3))
-    console.print("\n" + "─"*60 + "\n")
-
-    # Step 2: Convert CSV to Parquet (or reuse existing cache if Parquet is up-to-date)
+    # Step 1: Check Parquet Cache & Convert CSV -> Parquet
     is_cache_valid = False
     if os.path.exists(parquet_output) and not force_convert:
         if os.path.exists(args.csv_file):
@@ -316,12 +310,17 @@ def handle_run_all(args):
 
     if is_cache_valid:
         pq_size_mb = round(os.path.getsize(parquet_output) / (1024**2), 2)
-        console.print(f"[bold green]2/5. ⚡ Found existing, up-to-date Parquet cache ('{parquet_output}' - {pq_size_mb} MB).[/bold green]")
+        console.print(f"[bold green]1/5. ⚡ Found existing up-to-date Parquet storage ('{parquet_output}' - {pq_size_mb} MB).[/bold green]")
         console.print("[dim]Reusing cached Parquet storage for instant analytics! (Use --force to re-convert)[/dim]")
     else:
-        console.print(f"[bold yellow]2/5. Converting CSV -> Parquet ('{parquet_output}')...[/bold yellow]")
+        console.print(f"[bold yellow]1/5. Converting CSV -> Parquet ('{parquet_output}')...[/bold yellow]")
         with console.status("[bold yellow]⌛ Streaming CSV to Parquet out-of-core... (Please wait)[/bold yellow]"):
             handle_convert(argparse.Namespace(csv_file=args.csv_file, output=parquet_output, compression=args.compression))
+    console.print("\n" + "─"*60 + "\n")
+
+    # Step 2: Inspect Parquet File Metadata & Sample Rows
+    console.print("[bold yellow]2/5. Inspecting Parquet Schema & Metadata...[/bold yellow]")
+    handle_inspect(argparse.Namespace(file_path=parquet_output, limit=3))
     console.print("\n" + "─"*60 + "\n")
 
     # Auto-detect Delimiter
