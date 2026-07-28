@@ -305,10 +305,18 @@ def handle_run_all(args):
     handle_inspect(argparse.Namespace(file_path=args.csv_file, limit=3))
     console.print("\n" + "─"*60 + "\n")
 
-    # Step 2: Convert CSV to Parquet (or reuse existing cache)
+    # Step 2: Convert CSV to Parquet (or reuse existing cache if Parquet is up-to-date)
+    is_cache_valid = False
     if os.path.exists(parquet_output) and not force_convert:
+        if os.path.exists(args.csv_file):
+            csv_mtime = os.path.getmtime(args.csv_file)
+            pq_mtime = os.path.getmtime(parquet_output)
+            if pq_mtime >= csv_mtime:
+                is_cache_valid = True
+
+    if is_cache_valid:
         pq_size_mb = round(os.path.getsize(parquet_output) / (1024**2), 2)
-        console.print(f"[bold green]2/5. ⚡ Found existing Parquet cache ('{parquet_output}' - {pq_size_mb} MB).[/bold green]")
+        console.print(f"[bold green]2/5. ⚡ Found existing, up-to-date Parquet cache ('{parquet_output}' - {pq_size_mb} MB).[/bold green]")
         console.print("[dim]Reusing cached Parquet storage for instant analytics! (Use --force to re-convert)[/dim]")
     else:
         console.print(f"[bold yellow]2/5. Converting CSV -> Parquet ('{parquet_output}')...[/bold yellow]")
