@@ -1,6 +1,7 @@
 import sys
 import os
 import signal
+import select
 
 # Instant force-exit on Ctrl+C (SIGINT) to break out of C++ extensions like DuckDB
 def handle_sigint(sig, frame):
@@ -290,6 +291,22 @@ def handle_dropoffs(args, funnel_df=None):
     visual_table = render_visual_funnel(funnel_df)
     console.print(visual_table)
 
+def check_skip_keypress() -> bool:
+    """
+    Non-blocking check for 's' or 'S' keypress on stdin (macOS/Linux).
+    """
+    if not sys.stdin.isatty():
+        return False
+    try:
+        dr, _, _ = select.select([sys.stdin], [], [], 0)
+        if dr:
+            ch = sys.stdin.read(1)
+            if ch.lower() == 's':
+                return True
+    except Exception:
+        pass
+    return False
+
 def handle_run_all(args):
     console.print(f"\n[bold green]🚀 Starting Full Automated Pipeline for: {args.csv_file}[/bold green]\n")
     
@@ -338,10 +355,13 @@ def handle_run_all(args):
         freq_df = get_event_frequencies(parquet_output, delimiter=detected_delim, top_n=max_funnel_depth, dedupe_mode=dedupe_mode)
         top_events = freq_df['event_name'].tolist() if not freq_df.empty else []
         funnel_param = ",".join(top_events)
-        console.print(f"[bold cyan]🔍 Auto-detected Top {len(top_events)} Events (Delimiter: '{detected_delim}', Dedupe: '{dedupe_mode}'):[/bold cyan] {', '.join(top_events)}\n")
+        console.print(f"[bold cyan]🔍 Auto-detected Top {len(top_events)} Events (Delimiter: '{detected_delim}', Dedupe: '{dedupe_mode}'):[/bold cyan] {', '.join(top_events)}")
+        console.print("[dim]💡 Tip: Press 'S' key anytime to skip remaining funnel steps.[/dim]\n")
 
-    # Calculate Funnel ONCE with live progress bar
+    # Calculate Funnel ONCE with live progress bar and 'S' keypress skip listener
     steps = [s.strip() for s in funnel_param.split(",")]
+    user_requested_skip = False
+    
     with Progress(
         SpinnerColumn(),
         TextColumn("[bold yellow]{task.description}[/bold yellow]"),
@@ -352,9 +372,23 @@ def handle_run_all(args):
         transient=True
     ) as progress:
         task_id = progress.add_task("Calculating Funnel Steps...", total=len(steps))
+        
         def cb(current, total, step_name):
-            progress.update(task_id, completed=current, description=f"Analyzing Funnel Step {current}/{total}: '{step_name}'")
+            nonlocal user_requested_skip
+            if check_skip_keypress():
+                progress.stop()
+                answer = console.input("\n[bold yellow]⚠️ 'S' key pressed! Do you want to skip remaining steps? (Y/N): [/bold yellow]").strip().lower()
+                if answer == 'y':
+                    user_requested_skip = True
+                    return False
+                progress.start()
+            progress.update(task_id, completed=current, description=f"Analyzing Funnel Step {current}/{total}: '{step_name}' (Press 'S' to skip)")
+            return True
+
         shared_funnel_df = calculate_funnel(parquet_output, steps, delimiter=detected_delim, sequential=is_sequential, dedupe_mode=dedupe_mode, progress_callback=cb)
+
+    if user_requested_skip:
+        console.print("[bold magenta]⏩ Skipped remaining funnel steps on user request.[/bold magenta]\n")
 
     # Step 3: Executive Insights & KPIs
     console.print("[bold yellow]3/5. Generating Executive Session Insights...[/bold yellow]")

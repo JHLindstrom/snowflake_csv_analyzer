@@ -175,17 +175,20 @@ def calculate_funnel(
     delimiter: str = "->",
     sequential: bool = True,
     dedupe_mode: Optional[str] = None,
-    progress_callback = None
+    progress_callback = None,
+    skip_check_callback = None
 ) -> pd.DataFrame:
     """
     Calculates session reach or sequential funnel conversion in ultra-fast DuckDB SQL.
+    Uses C++ list position indexing without array transformation overhead for maximum throughput.
     """
     if not steps:
         raise ValueError("Funnel requires at least one step.")
 
     con = duckdb.connect(database=":memory:")
     read_sql = _get_read_sql(file_path)
-    split_sql = _get_split_sql(file_path, delimiter, dedupe_mode=dedupe_mode)
+    # Always use fast direct array splitting (list_position gives identical first-occurrence ordering)
+    split_sql = _get_split_sql(file_path, delimiter, dedupe_mode=None)
     clean_steps = [s.strip() for s in steps]
     total_steps = len(clean_steps)
     
@@ -198,8 +201,14 @@ def calculate_funnel(
     prev_count = None
     
     for idx, step in enumerate(clean_steps):
+        # Check if user requested to skip remaining steps
+        if skip_check_callback and skip_check_callback():
+            break
+
         if progress_callback:
-            progress_callback(idx + 1, total_steps, step)
+            should_continue = progress_callback(idx + 1, total_steps, step)
+            if should_continue is False:
+                break
             
         sub_sequence = clean_steps[:idx+1]
         
