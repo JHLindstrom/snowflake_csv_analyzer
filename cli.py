@@ -185,6 +185,36 @@ def handle_query(args):
         table.add_row(*[str(val) for val in row])
     console.print(table)
 
+def handle_run_all(args):
+    console.print(f"\n[bold green]🚀 Starting Full Automated Pipeline for: {args.csv_file}[/bold green]\n")
+    
+    # Auto-generate output parquet path if not specified
+    parquet_output = args.output
+    if not parquet_output:
+        base, _ = os.path.splitext(args.csv_file)
+        parquet_output = f"{base}.parquet"
+
+    # Step 1: Inspect CSV
+    console.print("[bold yellow]1/4. Inspecting CSV File Schema...[/bold yellow]")
+    handle_inspect(argparse.Namespace(file_path=args.csv_file, limit=3))
+    console.print("\n" + "─"*60 + "\n")
+
+    # Step 2: Convert CSV to Parquet
+    console.print(f"[bold yellow]2/4. Converting CSV -> Parquet ('{parquet_output}')...[/bold yellow]")
+    handle_convert(argparse.Namespace(csv_file=args.csv_file, output=parquet_output, compression=args.compression))
+    console.print("\n" + "─"*60 + "\n")
+
+    # Step 3: Inspect Generated Parquet
+    console.print("[bold yellow]3/4. Verifying Parquet Metadata...[/bold yellow]")
+    handle_inspect(argparse.Namespace(file_path=parquet_output, limit=3))
+    console.print("\n" + "─"*60 + "\n")
+
+    # Step 4: Run Analytics & Funnels
+    console.print("[bold yellow]4/4. Running Event Path & Funnel Analytics...[/bold yellow]")
+    handle_analyze(argparse.Namespace(file_path=parquet_output, delimiter=args.delimiter, top=args.top, funnel=args.funnel))
+
+    console.print(f"\n[bold green]✅ Full Pipeline Complete! Converted Parquet saved to '{parquet_output}'[/bold green]\n")
+
 def main():
     display_banner()
     parser = argparse.ArgumentParser(description="Snowflake Session CSV & Parquet Data Parser and Analyzer")
@@ -226,13 +256,24 @@ def main():
     query_p.add_argument("file_path", help="CSV or Parquet filepath")
     query_p.add_argument("--sql", required=True, help="SQL query string (use 'data' to refer to file table)")
 
+    # Subcommand: run-all
+    run_all_p = subparsers.add_parser("run-all", help="Run full pipeline: inspect CSV -> convert to Parquet -> verify Parquet -> run event analytics & funnels")
+    run_all_p.add_argument("csv_file", help="Input CSV filepath")
+    run_all_p.add_argument("-o", "--output", help="Optional output Parquet filepath (defaults to <csv_file>.parquet)")
+    run_all_p.add_argument("-d", "--delimiter", default="->", help="Event path separator token")
+    run_all_p.add_argument("-t", "--top", type=int, default=15, help="Number of top events/transitions to display")
+    run_all_p.add_argument("-f", "--funnel", help="Comma-separated funnel steps (e.g. 'Home,Product_View,Checkout')")
+    run_all_p.add_argument("-c", "--compression", default="ZSTD", choices=["ZSTD", "SNAPPY", "GZIP", "UNCOMPRESSED"], help="Parquet compression algorithm")
+
     if len(sys.argv) == 1:
         parser.print_help()
         sys.exit(1)
 
     args = parser.parse_args()
     
-    if args.command == "generate-mock":
+    if args.command == "run-all":
+        handle_run_all(args)
+    elif args.command == "generate-mock":
         handle_generate_mock(args)
     elif args.command == "inspect":
         handle_inspect(args)

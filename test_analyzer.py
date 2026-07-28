@@ -60,6 +60,11 @@ def main():
     print("==================================================")
     run_command(f"python3 cli.py query {parquet_file} --sql \"SELECT TOTAL_EVENTS, COUNT(*) as sessions FROM data GROUP BY 1 ORDER BY 1 LIMIT 5\"")
 
+    print("==================================================")
+    print("STEP 8: Testing All-In-One Pipeline (run-all)...")
+    print("==================================================")
+    run_command(f"python3 cli.py run-all {csv_file} --funnel 'Home,Product_View,Checkout'")
+
     print("\n==================================================")
     print("✅ ALL VERIFICATION TESTS PASSED SUCCESSFULLY!")
     print("==================================================")
