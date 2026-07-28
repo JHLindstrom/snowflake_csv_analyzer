@@ -278,6 +278,14 @@ def handle_run_all(args):
     handle_convert(argparse.Namespace(csv_file=args.csv_file, output=parquet_output, compression=args.compression))
     console.print("\n" + "─"*60 + "\n")
 
+    # Auto-detect Top N Funnel Events if --funnel is omitted
+    funnel_param = args.funnel
+    if not funnel_param:
+        freq_df = get_event_frequencies(parquet_output, delimiter=args.delimiter, top_n=args.top)
+        top_events = freq_df['event_name'].tolist() if not freq_df.empty else []
+        funnel_param = ",".join(top_events)
+        console.print(f"[bold cyan]🔍 Auto-detected Top {len(top_events)} Events for Funnel Analysis:[/bold cyan] {', '.join(top_events)}\n")
+
     # Step 3: Executive Insights & KPIs
     console.print("[bold yellow]3/5. Generating Executive Session Insights...[/bold yellow]")
     handle_insights(argparse.Namespace(file_path=parquet_output, delimiter=args.delimiter))
@@ -286,13 +294,12 @@ def handle_run_all(args):
     # Step 4: Event Transition Heatmap & Interactive HTML Report
     console.print("[bold yellow]4/5. Generating High-Resolution Transition Heatmap & HTML Dashboard...[/bold yellow]")
     html_export = args.html if args.html else f"{os.path.splitext(args.csv_file)[0]}_dashboard.html"
-    handle_heatmap(argparse.Namespace(file_path=parquet_output, delimiter=args.delimiter, top=8, html=html_export, funnel=args.funnel))
+    handle_heatmap(argparse.Namespace(file_path=parquet_output, delimiter=args.delimiter, top=args.top, html=html_export, funnel=funnel_param))
     console.print("\n" + "─"*60 + "\n")
 
     # Step 5: Visual Drop-Off Report
-    if args.funnel:
-        console.print("[bold yellow]5/5. Generating Visual Drop-Off & Retention Report...[/bold yellow]")
-        handle_dropoffs(argparse.Namespace(file_path=parquet_output, delimiter=args.delimiter, funnel=args.funnel))
+    console.print("[bold yellow]5/5. Generating Visual Drop-Off & Retention Report...[/bold yellow]")
+    handle_dropoffs(argparse.Namespace(file_path=parquet_output, delimiter=args.delimiter, funnel=funnel_param))
 
     abs_report_url = os.path.abspath(html_export)
     console.print(f"\n[bold green]✅ Full Pipeline Execution Complete![/bold green]")
