@@ -1,11 +1,13 @@
-#!/usr/bin/env python3
-"""
-Snowflake CSV & Parquet Data Analyzer CLI
-High-performance command line tool powered by DuckDB & Polars.
-"""
-
 import sys
 import os
+import signal
+
+# Instant force-exit on Ctrl+C (SIGINT) to break out of C++ extensions like DuckDB
+def handle_sigint(sig, frame):
+    print("\n\n[!] Process cancelled by user (Ctrl+C). Exiting immediately...")
+    os._exit(1)
+
+signal.signal(signal.SIGINT, handle_sigint)
 
 user_site = os.path.expanduser("~/Library/Python/3.9/lib/python/site-packages")
 if os.path.exists(user_site) and user_site not in sys.path:
