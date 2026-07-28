@@ -234,47 +234,57 @@ def handle_insights(args):
         exit_table.add_row(str(r.event_name), f"{r.exit_count:,}", f"{r.exit_share_pct}%")
     console.print(exit_table)
 
-def handle_heatmap(args):
+def handle_heatmap(args, funnel_df=None):
     console.print(f"\n[bold cyan]🔥 Generating Event Transition Heatmap...[/bold cyan]")
     matrix = get_transition_matrix(args.file_path, delimiter=args.delimiter, top_n=args.top)
     heatmap_table = render_terminal_heatmap(matrix)
     console.print(heatmap_table)
     
     if args.html:
-        metrics = get_executive_summary_metrics(args.file_path)
-        entry_exit = get_entry_exit_analytics(args.file_path, delimiter=args.delimiter)
-        paths_df = get_top_paths(args.file_path, top_n=10)
-        funnel_df = None
-        if args.funnel:
-            steps = [s.strip() for s in args.funnel.split(",")]
-            funnel_df = calculate_funnel(args.file_path, steps, delimiter=args.delimiter)
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[bold yellow]{task.description}[/bold yellow]"),
+            TimeElapsedColumn(),
+            console=console,
+            transient=True
+        ) as progress:
+            progress.add_task("Building High-Resolution HTML Dashboard...", total=None)
+            metrics = get_executive_summary_metrics(args.file_path)
+            entry_exit = get_entry_exit_analytics(args.file_path, delimiter=args.delimiter)
+            paths_df = get_top_paths(args.file_path, top_n=10)
             
-        abs_html_path = export_html_report(args.html, metrics, entry_exit['entry_points'], entry_exit['exit_points'], matrix, funnel_df, paths_df)
+            if funnel_df is None and args.funnel:
+                steps = [s.strip() for s in args.funnel.split(",")]
+                funnel_df = calculate_funnel(args.file_path, steps, delimiter=args.delimiter)
+                
+            abs_html_path = export_html_report(args.html, metrics, entry_exit['entry_points'], entry_exit['exit_points'], matrix, funnel_df, paths_df)
+            
         console.print(f"\n[bold green]✨ High-Resolution Dashboard HTML Report Exported![/bold green]")
         console.print(f"[bold cyan]🔗 Click to open in browser: file://{abs_html_path}[/bold cyan]")
 
-def handle_dropoffs(args):
-    if not args.funnel:
-        console.print("[bold red]Error: --funnel parameter required for drop-off analysis[/bold red]")
-        return
-    steps = [s.strip() for s in args.funnel.split(",")]
-    
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[bold yellow]{task.description}[/bold yellow]"),
-        BarColumn(),
-        TaskProgressColumn(),
-        TimeElapsedColumn(),
-        console=console,
-        transient=True
-    ) as progress:
-        task_id = progress.add_task("Calculating Funnel...", total=len(steps))
+def handle_dropoffs(args, funnel_df=None):
+    if funnel_df is None:
+        if not args.funnel:
+            console.print("[bold red]Error: --funnel parameter required for drop-off analysis[/bold red]")
+            return
+        steps = [s.strip() for s in args.funnel.split(",")]
         
-        def cb(current, total, step_name):
-            progress.update(task_id, completed=current, description=f"Analyzing Funnel Step {current}/{total}: '{step_name}'")
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[bold yellow]{task.description}[/bold yellow]"),
+            BarColumn(),
+            TaskProgressColumn(),
+            TimeElapsedColumn(),
+            console=console,
+            transient=True
+        ) as progress:
+            task_id = progress.add_task("Calculating Funnel...", total=len(steps))
             
-        funnel_df = calculate_funnel(args.file_path, steps, delimiter=args.delimiter, progress_callback=cb)
-        
+            def cb(current, total, step_name):
+                progress.update(task_id, completed=current, description=f"Analyzing Funnel Step {current}/{total}: '{step_name}'")
+                
+            funnel_df = calculate_funnel(args.file_path, steps, delimiter=args.delimiter, progress_callback=cb)
+            
     visual_table = render_visual_funnel(funnel_df)
     console.print(visual_table)
 
@@ -305,6 +315,22 @@ def handle_run_all(args):
         funnel_param = ",".join(top_events)
         console.print(f"[bold cyan]🔍 Auto-detected Top {len(top_events)} Events for Funnel Analysis:[/bold cyan] {', '.join(top_events)}\n")
 
+    # Calculate Funnel ONCE with live progress bar
+    steps = [s.strip() for s in funnel_param.split(",")]
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[bold yellow]{task.description}[/bold yellow]"),
+        BarColumn(),
+        TaskProgressColumn(),
+        TimeElapsedColumn(),
+        console=console,
+        transient=True
+    ) as progress:
+        task_id = progress.add_task("Calculating Funnel Steps...", total=len(steps))
+        def cb(current, total, step_name):
+            progress.update(task_id, completed=current, description=f"Analyzing Funnel Step {current}/{total}: '{step_name}'")
+        shared_funnel_df = calculate_funnel(parquet_output, steps, delimiter=args.delimiter, progress_callback=cb)
+
     # Step 3: Executive Insights & KPIs
     console.print("[bold yellow]3/5. Generating Executive Session Insights...[/bold yellow]")
     handle_insights(argparse.Namespace(file_path=parquet_output, delimiter=args.delimiter))
@@ -313,12 +339,12 @@ def handle_run_all(args):
     # Step 4: Event Transition Heatmap & Interactive HTML Report
     console.print("[bold yellow]4/5. Generating High-Resolution Transition Heatmap & HTML Dashboard...[/bold yellow]")
     html_export = args.html if args.html else f"{os.path.splitext(args.csv_file)[0]}_dashboard.html"
-    handle_heatmap(argparse.Namespace(file_path=parquet_output, delimiter=args.delimiter, top=args.top, html=html_export, funnel=funnel_param))
+    handle_heatmap(argparse.Namespace(file_path=parquet_output, delimiter=args.delimiter, top=args.top, html=html_export, funnel=funnel_param), funnel_df=shared_funnel_df)
     console.print("\n" + "─"*60 + "\n")
 
     # Step 5: Visual Drop-Off Report
     console.print("[bold yellow]5/5. Generating Visual Drop-Off & Retention Report...[/bold yellow]")
-    handle_dropoffs(argparse.Namespace(file_path=parquet_output, delimiter=args.delimiter, funnel=funnel_param))
+    handle_dropoffs(argparse.Namespace(file_path=parquet_output, delimiter=args.delimiter, funnel=funnel_param), funnel_df=shared_funnel_df)
 
     abs_report_url = os.path.abspath(html_export)
     console.print(f"\n[bold green]✅ Full Pipeline Execution Complete![/bold green]")

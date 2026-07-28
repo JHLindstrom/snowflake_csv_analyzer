@@ -112,7 +112,7 @@ def calculate_funnel(
     progress_callback = None
 ) -> pd.DataFrame:
     """
-    Calculates sequential funnel drop-off metrics with live step progress callbacks.
+    Calculates sequential funnel drop-off metrics using ultra-fast C++ array index comparisons in DuckDB.
     """
     if not steps:
         raise ValueError("Funnel requires at least one step.")
@@ -120,6 +120,7 @@ def calculate_funnel(
     con = duckdb.connect(database=":memory:")
     read_sql = _get_read_sql(file_path)
     clean_steps = [s.strip() for s in steps]
+    clean_delim = delimiter.replace("'", "''")
     total_steps = len(clean_steps)
     
     funnel_data = []
@@ -131,14 +132,27 @@ def calculate_funnel(
             progress_callback(idx + 1, total_steps, step)
             
         sub_sequence = clean_steps[:idx+1]
-        pattern = "%".join([s.replace("%", "\\%") for s in sub_sequence])
-        pattern = f"%{pattern}%"
-        clean_pat = pattern.replace("'", "''")
+        
+        # Build ultra-fast array position conditions (e.g., pos(Step1) > 0 AND pos(Step2) > pos(Step1)...)
+        conds = []
+        for i in range(len(sub_sequence)):
+            curr_step = sub_sequence[i].replace("'", "''")
+            conds.append(f"list_position(events, '{curr_step}') > 0")
+            if i > 0:
+                prev_step = sub_sequence[i-1].replace("'", "''")
+                conds.append(f"list_position(events, '{curr_step}') > list_position(events, '{prev_step}')")
+                
+        where_expr = " AND ".join(conds)
         
         sql = f"""
+        WITH split_events AS (
+            SELECT string_split(EVENT_PATH, '{clean_delim}') AS events
+            FROM {read_sql}
+            WHERE EVENT_PATH IS NOT NULL
+        )
         SELECT COUNT(*) 
-        FROM {read_sql}
-        WHERE EVENT_PATH LIKE '{clean_pat}';
+        FROM split_events
+        WHERE {where_expr};
         """
         count = con.execute(sql).fetchone()[0]
         cnt = count if count is not None else 0
