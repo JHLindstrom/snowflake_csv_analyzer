@@ -294,6 +294,7 @@ def handle_dropoffs(args, funnel_df=None):
 def handle_run_all(args):
     console.print(f"\n[bold green]🚀 Starting Full Automated Pipeline for: {args.csv_file}[/bold green]\n")
     
+    force_convert = getattr(args, 'force', False)
     parquet_output = args.output
     if not parquet_output:
         base, _ = os.path.splitext(args.csv_file)
@@ -304,9 +305,15 @@ def handle_run_all(args):
     handle_inspect(argparse.Namespace(file_path=args.csv_file, limit=3))
     console.print("\n" + "─"*60 + "\n")
 
-    # Step 2: Convert CSV to Parquet
-    console.print(f"[bold yellow]2/5. Converting CSV -> Parquet ('{parquet_output}')...[/bold yellow]")
-    handle_convert(argparse.Namespace(csv_file=args.csv_file, output=parquet_output, compression=args.compression))
+    # Step 2: Convert CSV to Parquet (or reuse existing cache)
+    if os.path.exists(parquet_output) and not force_convert:
+        pq_size_mb = round(os.path.getsize(parquet_output) / (1024**2), 2)
+        console.print(f"[bold green]2/5. ⚡ Found existing Parquet cache ('{parquet_output}' - {pq_size_mb} MB).[/bold green]")
+        console.print("[dim]Reusing cached Parquet storage for instant analytics! (Use --force to re-convert)[/dim]")
+    else:
+        console.print(f"[bold yellow]2/5. Converting CSV -> Parquet ('{parquet_output}')...[/bold yellow]")
+        with console.status("[bold yellow]⌛ Streaming CSV to Parquet out-of-core... (Please wait)[/bold yellow]"):
+            handle_convert(argparse.Namespace(csv_file=args.csv_file, output=parquet_output, compression=args.compression))
     console.print("\n" + "─"*60 + "\n")
 
     # Auto-detect Delimiter
@@ -434,6 +441,7 @@ def main():
     run_all_p.add_argument("-t", "--top", type=int, default=15, help="Number of top events to analyze")
     run_all_p.add_argument("-f", "--funnel", help="Comma-separated funnel steps (e.g. 'Home,Product_View,Checkout')")
     run_all_p.add_argument("-u", "--dedupe", default="consecutive", choices=["none", "consecutive", "unique"], help="Event deduplication mode: 'consecutive' (default), 'unique', 'none'")
+    run_all_p.add_argument("--force", action="store_true", help="Force re-converting CSV to Parquet even if cached Parquet file exists")
     run_all_p.add_argument("--html", help="Optional output HTML report filepath")
     run_all_p.add_argument("-c", "--compression", default="ZSTD", choices=["ZSTD", "SNAPPY", "GZIP", "UNCOMPRESSED"], help="Parquet compression algorithm")
 
