@@ -17,7 +17,7 @@ import argparse
 from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
-from rich.progress import Progress, SpinnerColumn, TextColumn
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn, TimeElapsedColumn
 
 from generate_mock_data import generate_csv
 from converter import convert_csv_to_parquet, inspect_file
@@ -255,10 +255,26 @@ def handle_heatmap(args):
 
 def handle_dropoffs(args):
     if not args.funnel:
-        console.print("[bold red]Error: --funnel parameter required for drop-off analysis (e.g. --funnel 'Home,Product_View,Checkout')[/bold red]")
+        console.print("[bold red]Error: --funnel parameter required for drop-off analysis[/bold red]")
         return
     steps = [s.strip() for s in args.funnel.split(",")]
-    funnel_df = calculate_funnel(args.file_path, steps, delimiter=args.delimiter)
+    
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[bold yellow]{task.description}[/bold yellow]"),
+        BarColumn(),
+        TaskProgressColumn(),
+        TimeElapsedColumn(),
+        console=console,
+        transient=True
+    ) as progress:
+        task_id = progress.add_task("Calculating Funnel...", total=len(steps))
+        
+        def cb(current, total, step_name):
+            progress.update(task_id, completed=current, description=f"Analyzing Funnel Step {current}/{total}: '{step_name}'")
+            
+        funnel_df = calculate_funnel(args.file_path, steps, delimiter=args.delimiter, progress_callback=cb)
+        
     visual_table = render_visual_funnel(funnel_df)
     console.print(visual_table)
 

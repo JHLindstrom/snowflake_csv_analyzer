@@ -105,9 +105,14 @@ def get_transition_pairs(file_path: str, delimiter: str = "->", top_n: int = 20)
     con.close()
     return df
 
-def calculate_funnel(file_path: str, steps: List[str], delimiter: str = "->") -> pd.DataFrame:
+def calculate_funnel(
+    file_path: str, 
+    steps: List[str], 
+    delimiter: str = "->",
+    progress_callback = None
+) -> pd.DataFrame:
     """
-    Calculates sequential funnel drop-off metrics in a SINGLE-PASS high-speed DuckDB query.
+    Calculates sequential funnel drop-off metrics with live step progress callbacks.
     """
     if not steps:
         raise ValueError("Funnel requires at least one step.")
@@ -115,55 +120,51 @@ def calculate_funnel(file_path: str, steps: List[str], delimiter: str = "->") ->
     con = duckdb.connect(database=":memory:")
     read_sql = _get_read_sql(file_path)
     clean_steps = [s.strip() for s in steps]
+    total_steps = len(clean_steps)
     
-    # Build a single-pass CASE WHEN query for all steps to scan the file ONCE
-    select_expressions = []
-    patterns = []
+    funnel_data = []
+    first_count = None
+    prev_count = None
     
     for idx, step in enumerate(clean_steps):
+        if progress_callback:
+            progress_callback(idx + 1, total_steps, step)
+            
         sub_sequence = clean_steps[:idx+1]
         pattern = "%".join([s.replace("%", "\\%") for s in sub_sequence])
         pattern = f"%{pattern}%"
         clean_pat = pattern.replace("'", "''")
-        patterns.append(clean_pat)
-        select_expressions.append(f"COUNT(CASE WHEN EVENT_PATH LIKE '{clean_pat}' THEN 1 END) AS step_{idx+1}")
         
-    single_pass_sql = f"""
-    SELECT 
-        {', '.join(select_expressions)}
-    FROM {read_sql};
-    """
-    
-    row = con.execute(single_pass_sql).fetchone()
-    con.close()
-    
-    funnel_data = []
-    first_count = row[0] if len(row) > 0 and row[0] is not None else 0
-    prev_count = first_count
-    
-    for idx, count in enumerate(row):
+        sql = f"""
+        SELECT COUNT(*) 
+        FROM {read_sql}
+        WHERE EVENT_PATH LIKE '{clean_pat}';
+        """
+        count = con.execute(sql).fetchone()[0]
         cnt = count if count is not None else 0
-        step_name = clean_steps[idx]
         
         if idx == 0:
+            first_count = cnt
+            prev_count = cnt
             conversion_pct = 100.0 if cnt > 0 else 0.0
             dropoff_pct = 0.0
         else:
             conversion_pct = round((cnt / prev_count) * 100, 2) if prev_count > 0 else 0.0
             dropoff_pct = round(100.0 - conversion_pct, 2)
+            prev_count = cnt
             
         overall_pct = round((cnt / first_count) * 100, 2) if first_count > 0 else 0.0
-        prev_count = cnt
 
         funnel_data.append({
             "step_number": idx + 1,
-            "step_name": step_name,
+            "step_name": step,
             "session_count": cnt,
             "step_conversion_pct": conversion_pct,
             "step_dropoff_pct": dropoff_pct,
             "overall_conversion_pct": overall_pct
         })
         
+    con.close()
     return pd.DataFrame(funnel_data)
 
 def search_sessions(
