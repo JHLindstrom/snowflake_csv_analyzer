@@ -17,40 +17,54 @@ def _get_read_sql(file_path: str) -> str:
 
 def get_entry_exit_analytics(file_path: str, delimiter: str = "->", top_n: int = 10) -> Dict[str, pd.DataFrame]:
     """
-    Analyzes entry events (first event) and exit events (last event) in user sessions.
+    Analyzes entry events (first event) and exit events (last event) in user sessions directly in DuckDB SQL.
     """
     con = duckdb.connect(database=":memory:")
     read_sql = _get_read_sql(file_path)
     clean_delim = delimiter.replace("'", "''")
     
-    query = f"""
+    # 1. Entry Events (Top N)
+    entry_sql = f"""
     WITH split_events AS (
-        SELECT 
-            SESSION,
-            string_split(EVENT_PATH, '{clean_delim}') AS events,
-            TOTAL_EVENTS
+        SELECT string_split(EVENT_PATH, '{clean_delim}') AS events
         FROM {read_sql}
         WHERE EVENT_PATH IS NOT NULL AND TOTAL_EVENTS > 0
     )
     SELECT 
-        trim(events[1]) AS entry_event,
-        trim(events[len(events)]) AS exit_event
-    FROM split_events;
+        trim(events[1]) AS event_name,
+        COUNT(*) AS entry_count,
+        ROUND(COUNT(*) * 100.0 / (SELECT COUNT(*) FROM split_events), 2) AS entry_share_pct
+    FROM split_events
+    WHERE trim(events[1]) != ''
+    GROUP BY 1
+    ORDER BY entry_count DESC
+    LIMIT {top_n};
     """
-    df = con.execute(query).fetchdf()
-    
-    entry_df = df['entry_event'].value_counts().reset_index()
-    entry_df.columns = ['event_name', 'entry_count']
-    entry_df['entry_share_pct'] = (entry_df['entry_count'] / entry_df['entry_count'].sum() * 100).round(2)
-    
-    exit_df = df['exit_event'].value_counts().reset_index()
-    exit_df.columns = ['event_name', 'exit_count']
-    exit_df['exit_share_pct'] = (exit_df['exit_count'] / exit_df['exit_count'].sum() * 100).round(2)
+    entry_df = con.execute(entry_sql).fetchdf()
+
+    # 2. Exit Events (Top N)
+    exit_sql = f"""
+    WITH split_events AS (
+        SELECT string_split(EVENT_PATH, '{clean_delim}') AS events
+        FROM {read_sql}
+        WHERE EVENT_PATH IS NOT NULL AND TOTAL_EVENTS > 0
+    )
+    SELECT 
+        trim(events[len(events)]) AS event_name,
+        COUNT(*) AS exit_count,
+        ROUND(COUNT(*) * 100.0 / (SELECT COUNT(*) FROM split_events), 2) AS exit_share_pct
+    FROM split_events
+    WHERE trim(events[len(events)]) != ''
+    GROUP BY 1
+    ORDER BY exit_count DESC
+    LIMIT {top_n};
+    """
+    exit_df = con.execute(exit_sql).fetchdf()
     
     con.close()
     return {
-        "entry_points": entry_df.head(top_n),
-        "exit_points": exit_df.head(top_n)
+        "entry_points": entry_df,
+        "exit_points": exit_df
     }
 
 def get_executive_summary_metrics(file_path: str) -> Dict[str, Any]:

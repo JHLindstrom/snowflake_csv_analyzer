@@ -46,7 +46,7 @@ def get_event_frequencies(file_path: str, delimiter: str = "->", top_n: int = 20
 
 def get_top_paths(file_path: str, top_n: int = 15, min_events: int = 1) -> pd.DataFrame:
     """
-    Ranks the most frequent full user navigation paths.
+    Ranks the most frequent full user navigation paths in high-speed DuckDB SQL.
     """
     con = duckdb.connect(database=":memory:")
     read_sql = _get_read_sql(file_path)
@@ -56,7 +56,7 @@ def get_top_paths(file_path: str, top_n: int = 15, min_events: int = 1) -> pd.Da
         EVENT_PATH AS full_path,
         TOTAL_EVENTS,
         COUNT(*) AS session_count,
-        ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER (), 2) AS share_percent
+        ROUND(COUNT(*) * 100.0 / (SELECT COUNT(*) FROM {read_sql}), 2) AS share_percent
     FROM {read_sql}
     WHERE EVENT_PATH IS NOT NULL AND TOTAL_EVENTS >= {min_events}
     GROUP BY 1, 2
