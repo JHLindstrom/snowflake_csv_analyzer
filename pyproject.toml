@@ -18,16 +18,19 @@ dependencies = [
     "fastapi>=0.100.0",
     "uvicorn>=0.20.0",
     "python-multipart>=0.0.6",
+    "reportlab>=4.0",
 ]
 
 [project.optional-dependencies]
 test = ["pytest>=8.0"]
+browser-test = ["pytest>=8.0", "playwright>=1.52"]
 
 [project.scripts]
 trishula = "cli:main"
 trishula-web = "server:main"
 
 [tool.setuptools]
+packages = ["trishula_web"]
 py-modules = [
     "cli",
     "benchmark",
@@ -37,9 +40,13 @@ py-modules = [
     "errors",
     "generate_mock_data",
     "insights",
+    "performance_profile",
     "server",
     "visualizer",
 ]
+
+[tool.setuptools.package-data]
+trishula_web = ["templates/*.html", "static/*.css", "static/*.js"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
