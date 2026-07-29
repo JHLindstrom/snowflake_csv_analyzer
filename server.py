@@ -25,6 +25,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
 from converter import convert_csv_to_parquet, inspect_file, validate_dataset_schema
+from duckdb_config import get_duckdb_settings
 from errors import DatasetValidationError
 from event_parser import (
     detect_delimiter,
@@ -473,12 +474,15 @@ def get_state():
     state = _current_dataset_state()
     if not state.parquet_file or not os.path.exists(state.parquet_file):
         return {"loaded": False}
+    duckdb_settings = get_duckdb_settings()
     return {
         "loaded": True,
         "raw_file": os.path.basename(state.raw_file),
         "parquet_file": os.path.basename(state.parquet_file),
         "delimiter": state.delimiter,
-        "file_size_mb": round(os.path.getsize(state.parquet_file) / (1024**2), 2)
+        "file_size_mb": round(os.path.getsize(state.parquet_file) / (1024**2), 2),
+        "duckdb_memory_limit": duckdb_settings.memory_limit,
+        "duckdb_threads": duckdb_settings.threads,
     }
 
 
@@ -1032,7 +1036,7 @@ def index(request: Request):
             </div>
             <div style="display:flex;gap:10px;align-items:center;">
                 <span id="storageStatus" class="tag-pill">Storage: checking…</span>
-                <span class="tag-pill">⚡ DuckDB Out-of-Core Engine</span>
+                <span id="duckdbStatus" class="tag-pill">⚡ DuckDB: checking limits…</span>
                 <button id="unloadButton" class="btn-secondary">Unload Dataset</button>
             </div>
         </div>
@@ -1266,7 +1270,8 @@ trishula-web --host 127.0.0.1 --port 8000</code></pre>
                     <li><strong>Incorrect funnel counts:</strong> verify delimiter detection and selected dedupe mode.</li>
                     <li><strong>Empty transition matrix:</strong> wait for calculation to finish, then check the displayed status. Sessions containing only one event legitimately have no transitions.</li>
                     <li><strong>Out of memory:</strong> lower <code>TRISHULA_DUCKDB_MEMORY_LIMIT</code> and confirm sufficient temporary disk space.</li>
-                    <li><strong>Slow analytics:</strong> tabs load on demand and heavy queries are serialized by default. Benchmark before increasing <code>TRISHULA_MAX_CONCURRENT_ANALYTICS</code>.</li>
+                    <li><strong>High CPU usage:</strong> lower <code>TRISHULA_DUCKDB_THREADS</code>; the dataset banner shows the active thread and memory limits.</li>
+                    <li><strong>Slow analytics:</strong> tabs load on demand and heavy queries are serialized by default. Benchmark before increasing <code>TRISHULA_DUCKDB_THREADS</code> or <code>TRISHULA_MAX_CONCURRENT_ANALYTICS</code>.</li>
                     <li><strong>Upload rejected:</strong> check file extension, configured upload limit, and CSV/Parquet validity.</li>
                     <li><strong>Trusted feature returns 403:</strong> restart with <code>TRISHULA_TRUSTED_LOCAL_MODE=true</code> only on a trusted workstation.</li>
                 </ul>
@@ -1323,6 +1328,8 @@ trishula-web --host 127.0.0.1 --port 8000</code></pre>
                     document.getElementById('datasetBanner').style.display = 'flex';
                     document.getElementById('activeFileName').innerText = stateData.parquet_file;
                     document.getElementById('activeFileSize').innerText = `(${stateData.file_size_mb} MB)`;
+                    document.getElementById('duckdbStatus').textContent =
+                        `⚡ DuckDB: ${stateData.duckdb_threads} threads · ${stateData.duckdb_memory_limit}`;
                     loadStorageStatus();
                     resetTabLoads();
                     loadTabData(activeTab);

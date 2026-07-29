@@ -14,6 +14,7 @@ from starlette.requests import Request
 
 import server
 from converter import convert_csv_to_parquet, validate_dataset_schema
+from duckdb_config import create_duckdb_connection, get_duckdb_settings
 from event_parser import (
     calculate_funnel,
     get_event_frequencies,
@@ -78,6 +79,45 @@ def test_event_frequencies_honor_consecutive_and_unique_deduplication(event_data
     assert raw_counts == {"A": 6, "B": 4, "C": 1}
     assert consecutive_counts == {"A": 5, "B": 4, "C": 1}
     assert unique_counts == {"A": 4, "B": 4, "C": 1}
+
+
+def test_duckdb_resource_settings_apply_to_connections(monkeypatch):
+    monkeypatch.setenv("TRISHULA_DUCKDB_MEMORY_LIMIT", "512MB")
+    monkeypatch.setenv("TRISHULA_DUCKDB_THREADS", "2")
+
+    settings = get_duckdb_settings()
+    connection = create_duckdb_connection()
+    try:
+        assert settings.memory_limit == "512MB"
+        assert settings.threads == 2
+        assert (
+            connection.execute(
+                "SELECT current_setting('memory_limit')"
+            ).fetchone()[0]
+            == "488.2 MiB"
+        )
+        assert (
+            connection.execute("SELECT current_setting('threads')").fetchone()[0]
+            == 2
+        )
+    finally:
+        connection.close()
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "1.5", "many", "65"])
+def test_duckdb_thread_setting_rejects_invalid_values(monkeypatch, value):
+    monkeypatch.setenv("TRISHULA_DUCKDB_THREADS", value)
+    with pytest.raises(ValueError, match="TRISHULA_DUCKDB_THREADS"):
+        get_duckdb_settings()
+
+
+@pytest.mark.parametrize(
+    "value", ["", "0GB", "lots", "1GB'; DROP TABLE data; --"]
+)
+def test_duckdb_memory_setting_rejects_invalid_values(monkeypatch, value):
+    monkeypatch.setenv("TRISHULA_DUCKDB_MEMORY_LIMIT", value)
+    with pytest.raises(ValueError, match="TRISHULA_DUCKDB_MEMORY_LIMIT"):
+        get_duckdb_settings()
 
 
 def test_transition_counts_are_exact_and_dedupe_sensitive(event_dataset):
@@ -386,6 +426,7 @@ def test_dashboard_includes_task_focused_help():
     assert "Dedupe and funnel semantics" in dashboard
     assert "Unload Dataset" in dashboard
     assert "Troubleshooting" in dashboard
+    assert 'id="duckdbStatus"' in dashboard
 
 
 def test_dashboard_exposes_funnel_and_search_loading_errors():

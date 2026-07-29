@@ -1,16 +1,13 @@
-import os
-
 import duckdb
 import pandas as pd
 import threading
 from typing import List, Dict, Any, Optional
 
+from duckdb_config import create_duckdb_connection
+
 
 def _connect() -> duckdb.DuckDBPyConnection:
-    con = duckdb.connect(database=":memory:")
-    memory_limit = os.getenv("TRISHULA_DUCKDB_MEMORY_LIMIT", "1GB").replace("'", "''")
-    con.execute(f"SET memory_limit = '{memory_limit}'")
-    return con
+    return create_duckdb_connection()
 
 
 def _get_read_sql(file_path: str) -> str:

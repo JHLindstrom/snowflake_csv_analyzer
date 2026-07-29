@@ -6,16 +6,14 @@ import duckdb
 from typing import Dict, Any
 from pathlib import Path
 
+from duckdb_config import create_duckdb_connection
 from errors import DatasetValidationError
 
 REQUIRED_COLUMNS = {"SESSION", "EVENT_PATH", "TOTAL_EVENTS"}
 
 
 def _connect() -> duckdb.DuckDBPyConnection:
-    con = duckdb.connect(database=":memory:")
-    memory_limit = os.getenv("TRISHULA_DUCKDB_MEMORY_LIMIT", "1GB").replace("'", "''")
-    con.execute(f"SET memory_limit = '{memory_limit}'")
-    return con
+    return create_duckdb_connection()
 
 
 def validate_dataset_schema(file_path: str) -> Dict[str, str]:
