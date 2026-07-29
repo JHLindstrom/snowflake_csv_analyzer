@@ -106,6 +106,12 @@ When constructing a custom funnel, add or remove all desired steps first and
 then select **Calculate Funnel**. Funnel paths are split and deduplicated once
 per query, rather than rescanning the dataset for every step.
 
+Session Explorer displays long journeys as compact previews. Consecutive
+repeated events are grouped with a multiplier, matched events and subpaths are
+highlighted, and each result can be expanded independently inside a bounded
+scroll area. Use **Collapse expanded journeys** to restore the compact result
+set.
+
 The **Help & How-to** tab in the UI contains the required schema, dedupe and
 funnel semantics, common commands, storage behavior, and troubleshooting steps.
 The README remains the authoritative reference for installation, configuration,
