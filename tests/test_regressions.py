@@ -610,6 +610,15 @@ def test_application_and_package_versions_match():
     assert server.app.version == version
 
 
+def test_pdf_dependency_is_declared_in_all_installation_paths():
+    requirements = Path("requirements.txt").read_text(encoding="utf-8")
+    pyproject = Path("pyproject.toml").read_text(encoding="utf-8")
+    setup = Path("setup.py").read_text(encoding="utf-8")
+    assert "reportlab>=4.0" in requirements
+    assert '"reportlab>=4.0"' in pyproject
+    assert '"reportlab>=4.0"' in setup
+
+
 def test_performance_profile_writes_reusable_artifacts(tmp_path):
     result = run_performance_profile(100, tmp_path, top_functions=5)
     assert Path(result["profile"]).is_file()
