@@ -88,24 +88,56 @@ def get_event_frequencies(file_path: str, delimiter: str = "->", top_n: int = 20
     con = _connect()
     read_sql = _get_read_sql(file_path)
     clean_delim = delimiter.replace("'", "''")
-    path_expr = "EVENT_PATH"
-    if dedupe_mode and dedupe_mode != "none":
-        path_expr = sanitize_event_path_sql("EVENT_PATH", delimiter=delimiter, mode=dedupe_mode)
-    
+    mode = dedupe_mode or "none"
+    index_filter = ""
+    if mode == "consecutive":
+        index_filter = (
+            "WHERE event_index = 1 "
+            "OR events[event_index] != events[event_index - 1]"
+        )
+    elif mode == "unique":
+        index_filter = (
+            "WHERE list_position(events, events[event_index]) = event_index"
+        )
+
     query = f"""
-    WITH unnested AS (
-        SELECT 
-            unnest(string_split({path_expr}, '{clean_delim}')) AS event_name
+    WITH paths AS (
+        SELECT
+            list_transform(
+                string_split(EVENT_PATH, '{clean_delim}'),
+                event -> trim(event)
+            ) AS events
         FROM {read_sql}
         WHERE EVENT_PATH IS NOT NULL
+    ),
+    indexed AS (
+        SELECT
+            events,
+            generate_subscripts(events, 1) AS event_index
+        FROM paths
+    ),
+    unnested AS (
+        SELECT events[event_index] AS event_name
+        FROM indexed
+        {index_filter}
+    ),
+    counts AS (
+        SELECT
+            event_name,
+            COUNT(*) AS occurrence_count
+        FROM unnested
+        WHERE event_name != ''
+        GROUP BY event_name
     )
-    SELECT 
-        trim(event_name) AS event_name,
-        COUNT(*) AS occurrence_count,
-        ROUND(COUNT(*) * 100.0 / (SELECT COUNT(*) FROM unnested), 2) AS percentage
-    FROM unnested
-    WHERE trim(event_name) != ''
-    GROUP BY 1
+    SELECT
+        event_name,
+        occurrence_count,
+        ROUND(
+            occurrence_count * 100.0
+            / NULLIF(SUM(occurrence_count) OVER (), 0),
+            2
+        ) AS percentage
+    FROM counts
     ORDER BY occurrence_count DESC
     LIMIT {top_n};
     """

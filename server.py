@@ -1097,10 +1097,13 @@ def index(request: Request):
                 <!-- Quick Preset Flow Buttons -->
                 <div style="margin-bottom: 20px;">
                     <span style="font-size: 13px; color: #94a3b8; font-weight: bold; margin-right: 10px;">QUICK PRESETS:</span>
-                    <button class="chip-btn funnel-preset" data-preset="top">⚡ Top 4 Frequent Events</button>
-                    <button class="chip-btn funnel-preset" data-preset="checkout" style="margin-left: 6px;">🛒 E-Commerce Checkout Flow</button>
-                    <button class="chip-btn funnel-preset" data-preset="search" style="margin-left: 6px;">🔍 Search Discovery Flow</button>
+                    <button class="chip-btn funnel-preset" data-preset="top" disabled>⚡ Top 4 Frequent Events</button>
+                    <button class="chip-btn funnel-preset" data-preset="checkout" style="margin-left: 6px;" disabled>🛒 E-Commerce Checkout Flow</button>
+                    <button class="chip-btn funnel-preset" data-preset="search" style="margin-left: 6px;" disabled>🔍 Search Discovery Flow</button>
                     <button class="chip-btn" id="clearFunnelButton" style="margin-left: 6px; background: rgba(251, 113, 133, 0.15); color: #fb7185; border-color: rgba(251, 113, 133, 0.3);">🗑️ Clear All</button>
+                </div>
+                <div id="funnelEventStatus" role="status" aria-live="polite" style="color: #94a3b8; margin-bottom: 12px;">
+                    Open this tab to load available events.
                 </div>
 
                 <!-- Funnel Step Tiles -->
@@ -1173,6 +1176,7 @@ def index(request: Request):
                     <input id="searchSubpathInput" placeholder="Filter by subpath sequence (e.g. Search->Home)" style="flex: 1;" />
                     <button class="btn-action" id="searchButton">🔎 Search Sessions</button>
                 </div>
+                <div id="searchStatus" role="status" aria-live="polite" style="color: #94a3b8; margin-bottom: 12px;"></div>
 
                 <table id="searchTable">
                     <thead>
@@ -1476,43 +1480,73 @@ trishula-web --host 127.0.0.1 --port 8000</code></pre>
 
         async function loadEvents() {
             const dedupe = document.getElementById('dedupeSelect').value;
-            const res = await fetch(`/api/events?dedupe=${dedupe}`);
-            const data = await res.json();
-
-            allTopEventsList = data;
-
-            // Pre-populate Add Event Dropdown
             const select = document.getElementById('addEventSelect');
+            const status = document.getElementById('funnelEventStatus');
+            const presetButtons = document.querySelectorAll('.funnel-preset');
+            status.style.color = '#94a3b8';
+            status.textContent = 'Loading frequent events…';
+            presetButtons.forEach(button => button.disabled = true);
+            select.disabled = true;
             select.replaceChildren();
             const placeholderOption = document.createElement('option');
             placeholderOption.value = '';
-            placeholderOption.textContent = '+ Select Event Step to Add...';
+            placeholderOption.textContent = 'Loading events…';
             select.appendChild(placeholderOption);
-            data.forEach(e => {
-                const option = document.createElement('option');
-                option.value = e.event_name;
-                option.textContent = `${e.event_name} (${e.occurrence_count.toLocaleString()} occurrences)`;
-                select.appendChild(option);
-            });
+            try {
+                const res = await fetch(`/api/events?dedupe=${dedupe}`);
+                const contentType = res.headers.get('content-type') || '';
+                const data = contentType.includes('application/json')
+                    ? await res.json()
+                    : {detail: await res.text()};
+                if (!res.ok) throw new Error(data.detail || 'Event discovery failed');
+                if (!Array.isArray(data)) throw new Error('Invalid event response');
 
-            // Auto-populate Funnel if empty
-            if (selectedFunnelSteps.length === 0 && data.length > 0) {
-                selectedFunnelSteps = data.slice(0, 4).map(e => e.event_name);
+                allTopEventsList = data;
+                placeholderOption.textContent = data.length
+                    ? '+ Select Event Step to Add...'
+                    : 'No events available';
+                data.forEach(e => {
+                    const option = document.createElement('option');
+                    option.value = e.event_name;
+                    option.textContent = `${e.event_name} (${e.occurrence_count.toLocaleString()} occurrences)`;
+                    select.appendChild(option);
+                });
+
+                const chipsDiv = document.getElementById('quickSearchChips');
+                chipsDiv.replaceChildren();
+                data.slice(0, 6).forEach(e => {
+                    const button = document.createElement('button');
+                    button.className = 'chip-btn';
+                    button.textContent = `Event: ${e.event_name}`;
+                    button.addEventListener('click', () => applySearchFilter(e.event_name, ''));
+                    chipsDiv.appendChild(button);
+                });
+
+                if (!data.length) {
+                    status.textContent = 'No usable events were found in the active dataset.';
+                    selectedFunnelSteps = [];
+                    renderFunnelPills();
+                    return;
+                }
+
+                status.style.color = '#34d399';
+                status.textContent = `Loaded ${data.length} frequent events.`;
+                presetButtons.forEach(button => button.disabled = false);
+                select.disabled = false;
+                if (selectedFunnelSteps.length === 0) {
+                    selectedFunnelSteps = data.slice(0, 4).map(e => e.event_name);
+                }
+                renderFunnelPills();
+                await loadFunnel();
+            } catch (err) {
+                allTopEventsList = [];
+                selectedFunnelSteps = [];
+                status.style.color = '#fb7185';
+                status.textContent = `Unable to load events: ${err.message}`;
+                placeholderOption.textContent = 'Events unavailable';
+                renderFunnelPills();
+                throw err;
             }
-
-            // Populate Session Explorer Quick Filters
-            const chipsDiv = document.getElementById('quickSearchChips');
-            chipsDiv.replaceChildren();
-            data.slice(0, 6).forEach(e => {
-                const button = document.createElement('button');
-                button.className = 'chip-btn';
-                button.textContent = `Event: ${e.event_name}`;
-                button.addEventListener('click', () => applySearchFilter(e.event_name, ''));
-                chipsDiv.appendChild(button);
-            });
-
-            renderFunnelPills();
-            await loadFunnel();
         }
 
         function renderFunnelPills() {
@@ -1533,6 +1567,12 @@ trishula-web --host 127.0.0.1 --port 8000</code></pre>
         }
 
         function applyFunnelPreset(presetType) {
+            if (allTopEventsList.length === 0) {
+                const status = document.getElementById('funnelEventStatus');
+                status.style.color = '#fb7185';
+                status.textContent = 'Events are not available yet. Wait for loading to finish or review the error above.';
+                return;
+            }
             if (presetType === 'top') {
                 selectedFunnelSteps = allTopEventsList.slice(0, 4).map(e => e.event_name);
             } else if (presetType === 'checkout') {
@@ -1556,7 +1596,7 @@ trishula-web --host 127.0.0.1 --port 8000</code></pre>
         }
 
         function addStepToFunnel(stepName) {
-            if (stepName && !selectedFunnelSteps.includes(stepName)) {
+            if (stepName) {
                 selectedFunnelSteps.push(stepName);
                 renderFunnelPills();
                 loadFunnel();
@@ -1575,24 +1615,40 @@ trishula-web --host 127.0.0.1 --port 8000</code></pre>
             if (selectedFunnelSteps.length === 0) return;
             const dedupe = document.getElementById('dedupeSelect').value;
             const stepsParam = selectedFunnelSteps.join(',');
-            const res = await fetch(`/api/funnel?steps=${encodeURIComponent(stepsParam)}&dedupe=${dedupe}`);
-            const data = await res.json();
-
+            const status = document.getElementById('funnelEventStatus');
             const tbody = document.querySelector('#funnelMetricsTable tbody');
-            tbody.innerHTML = data.map(r => `
-                <tr>
-                    <td><strong>#${r.step_number}</strong></td>
-                    <td><strong style="color: #38bdf8">${escapeHtml(r.step_name)}</strong></td>
-                    <td><strong>${r.session_count.toLocaleString()}</strong></td>
-                    <td><span class="tag-pill" style="color: #34d399">${r.step_conversion_pct}%</span></td>
-                    <td><span class="tag-pill" style="color: #fb7185; border-color: rgba(251,113,133,0.3)">${r.step_dropoff_pct}%</span></td>
-                    <td>
-                        <div class="bar-container">
-                            <div class="bar-fill" style="width: ${r.step_conversion_pct}%"></div>
-                        </div>
-                    </td>
-                </tr>
-            `).join('');
+            try {
+                status.style.color = '#94a3b8';
+                status.textContent = 'Calculating funnel retention…';
+                const res = await fetch(`/api/funnel?steps=${encodeURIComponent(stepsParam)}&dedupe=${dedupe}`);
+                const contentType = res.headers.get('content-type') || '';
+                const data = contentType.includes('application/json')
+                    ? await res.json()
+                    : {detail: await res.text()};
+                if (!res.ok) throw new Error(data.detail || 'Funnel calculation failed');
+                if (!Array.isArray(data)) throw new Error('Invalid funnel response');
+
+                tbody.innerHTML = data.map(r => `
+                    <tr>
+                        <td><strong>#${r.step_number}</strong></td>
+                        <td><strong style="color: #38bdf8">${escapeHtml(r.step_name)}</strong></td>
+                        <td><strong>${r.session_count.toLocaleString()}</strong></td>
+                        <td><span class="tag-pill" style="color: #34d399">${r.step_conversion_pct}%</span></td>
+                        <td><span class="tag-pill" style="color: #fb7185; border-color: rgba(251,113,133,0.3)">${r.step_dropoff_pct}%</span></td>
+                        <td>
+                            <div class="bar-container">
+                                <div class="bar-fill" style="width: ${r.step_conversion_pct}%"></div>
+                            </div>
+                        </td>
+                    </tr>
+                `).join('');
+                status.style.color = '#34d399';
+                status.textContent = `Funnel calculated for ${data.length} steps.`;
+            } catch (err) {
+                status.style.color = '#fb7185';
+                status.textContent = `Unable to calculate funnel: ${err.message}`;
+                tbody.innerHTML = `<tr><td colspan="6" style="text-align: center; color: #fb7185;">Funnel calculation failed.</td></tr>`;
+            }
         }
 
         async function loadHeatmap() {
@@ -1652,33 +1708,49 @@ trishula-web --host 127.0.0.1 --port 8000</code></pre>
         async function runSearch() {
             const ev = document.getElementById('searchEventInput').value.trim();
             const sub = document.getElementById('searchSubpathInput').value.trim();
+            const status = document.getElementById('searchStatus');
+            const tbody = document.querySelector('#searchTable tbody');
             let url = '/api/search?limit=25';
             if (ev) url += `&event=${encodeURIComponent(ev)}`;
             if (sub) url += `&subpath=${encodeURIComponent(sub)}`;
+            try {
+                status.style.color = '#94a3b8';
+                status.textContent = 'Searching sessions…';
+                const res = await fetch(url);
+                const contentType = res.headers.get('content-type') || '';
+                const data = contentType.includes('application/json')
+                    ? await res.json()
+                    : {detail: await res.text()};
+                if (!res.ok) throw new Error(data.detail || 'Session search failed');
+                if (!Array.isArray(data)) throw new Error('Invalid search response');
 
-            const res = await fetch(url);
-            const data = await res.json();
+                if (data.length === 0) {
+                    status.textContent = 'No matching sessions found.';
+                    tbody.innerHTML = `<tr><td colspan="3" style="text-align: center; color: #64748b;">No matching sessions found.</td></tr>`;
+                    return;
+                }
 
-            const tbody = document.querySelector('#searchTable tbody');
-            if (!data || data.length === 0) {
-                tbody.innerHTML = `<tr><td colspan="3" style="text-align: center; color: #64748b;">No matching sessions found.</td></tr>`;
-                return;
+                tbody.innerHTML = data.map(s => {
+                    const steps = s.EVENT_PATH.split('->');
+                    const breadcrumbs = steps.map(st => `
+                        <span class="breadcrumb-pill">${escapeHtml(st)}</span>
+                    `).join('<span class="breadcrumb-arrow">➔</span>');
+
+                    return `
+                        <tr>
+                            <td><strong style="color: #38bdf8; font-family: monospace; font-size: 13px;">${escapeHtml(s.SESSION)}</strong></td>
+                            <td>${breadcrumbs}</td>
+                            <td><span class="tag-pill">${s.TOTAL_EVENTS} events</span></td>
+                        </tr>
+                    `;
+                }).join('');
+                status.style.color = '#34d399';
+                status.textContent = `Showing ${data.length} matching sessions.`;
+            } catch (err) {
+                status.style.color = '#fb7185';
+                status.textContent = `Unable to search sessions: ${err.message}`;
+                tbody.innerHTML = `<tr><td colspan="3" style="text-align: center; color: #fb7185;">Session search failed.</td></tr>`;
             }
-
-            tbody.innerHTML = data.map(s => {
-                const steps = s.EVENT_PATH.split('->');
-                const breadcrumbs = steps.map((st, i) => `
-                    <span class="breadcrumb-pill">${escapeHtml(st)}</span>
-                `).join('<span class="breadcrumb-arrow">➔</span>');
-
-                return `
-                    <tr>
-                        <td><strong style="color: #38bdf8; font-family: monospace; font-size: 13px;">${escapeHtml(s.SESSION)}</strong></td>
-                        <td>${breadcrumbs}</td>
-                        <td><span class="tag-pill">${s.TOTAL_EVENTS} events</span></td>
-                    </tr>
-                `;
-            }).join('');
         }
     </script>
 </body>
