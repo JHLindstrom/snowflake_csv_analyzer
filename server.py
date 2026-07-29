@@ -808,8 +808,8 @@ def index(request: Request):
 
         .navbar {
             display: flex;
-            justify-content: space-between;
             align-items: center;
+            gap: 22px;
             padding: 16px 32px;
             background: rgba(15, 23, 42, 0.85);
             backdrop-filter: blur(16px);
@@ -821,15 +821,67 @@ def index(request: Request):
         .brand {
             display: flex;
             align-items: center;
-            gap: 12px;
-            font-size: 22px;
+            flex: 0 0 auto;
+            gap: 10px;
             font-weight: 800;
             letter-spacing: -0.02em;
+        }
+        .brand-icon {
+            color: #fbbf24;
+            filter: drop-shadow(0 0 10px rgba(251, 191, 36, 0.3));
+            font-family: Georgia, 'Times New Roman', serif;
+            font-size: 54px;
+            font-weight: 400;
+            line-height: 0.8;
+        }
+        .brand-copy {
+            display: flex;
+            flex-direction: column;
+            font-size: 21px;
+            line-height: 1.02;
+        }
+        .brand-copy span {
             background: linear-gradient(135deg, #38bdf8, #818cf8);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
         }
-        .nav-items { display: flex; gap: 8px; }
+        .nav-items {
+            display: flex;
+            flex: 0 1 auto;
+            gap: 8px;
+            justify-content: center;
+            min-width: 0;
+        }
+        .nav-actions {
+            align-items: center;
+            display: flex;
+            flex: 0 0 auto;
+            gap: 10px;
+            margin-left: auto;
+        }
+        .nav-items .nav-btn {
+            justify-content: center;
+            max-width: 150px;
+            text-align: center;
+            white-space: normal;
+        }
+        .nav-actions [data-tab="help"] {
+            justify-content: center;
+            max-width: 120px;
+            text-align: center;
+            white-space: normal;
+        }
+        .nav-actions #openFileButton {
+            max-width: 125px;
+            text-align: center;
+            white-space: normal;
+        }
+        .nav-actions #printButton {
+            justify-content: center;
+            max-width: 195px;
+            text-align: center;
+            white-space: normal;
+        }
         .nav-btn {
             background: transparent;
             border: 1px solid transparent;
@@ -1163,6 +1215,26 @@ def index(request: Request):
             50% { opacity: 1; }
             100% { background-position: -100% 0; opacity: 0.55; }
         }
+        @media (max-width: 1500px) {
+            .navbar {
+                flex-wrap: wrap;
+            }
+            .nav-items {
+                flex-basis: 100%;
+                order: 3;
+            }
+            .nav-actions {
+                margin-left: auto;
+            }
+        }
+        @media (max-width: 900px) {
+            .nav-actions {
+                flex: 1 1 100%;
+                flex-wrap: wrap;
+                justify-content: flex-end;
+                margin-left: 0;
+            }
+        }
         @media (prefers-reduced-motion: reduce) {
             .loading-overlay.visible,
             .loading-orbit,
@@ -1307,25 +1379,25 @@ def index(request: Request):
 <body>
     <!-- Top Navbar -->
     <div class="navbar">
-        <div class="brand">🔱 TRISHULA WEB</div>
+        <div class="brand" aria-label="Trishula Web">
+            <span class="brand-icon" aria-hidden="true">♆︎</span>
+            <span class="brand-copy"><span>TRISHULA</span><span>WEB</span></span>
+        </div>
         <div class="nav-items">
             <button class="nav-btn active" data-tab="overview">📊 Executive KPIs</button>
             <button class="nav-btn" data-tab="funnel">🎛️ Funnel Retention</button>
             <button class="nav-btn" data-tab="heatmap">🔥 Transition Matrix</button>
             <button class="nav-btn" data-tab="search">🔎 Session Explorer</button>
-            <button class="nav-btn" data-tab="help">❓ Help & How-to</button>
         </div>
-        <div style="display: flex; gap: 10px; align-items: center;">
-            <button class="nav-btn" id="openFileButton">📁 Load Dataset</button>
+        <div class="nav-actions">
+            <button class="nav-btn" id="openFileButton" aria-controls="loaderCard" aria-expanded="false">📁 Load Dataset</button>
             <select id="dedupeSelect">
                 <option value="consecutive">Dedupe: Consecutive</option>
                 <option value="unique">Dedupe: Unique</option>
                 <option value="none">Dedupe: None (Raw)</option>
             </select>
-            <button class="nav-btn" id="restartButton" style="color: #fb7185; border-color: rgba(251, 113, 133, 0.3);">
-                🔄 Restart Server
-            </button>
             <button class="btn-action" id="printButton" title="Exports only the currently selected analysis tab">🖨️ Export Selected Tab to PDF</button>
+            <button class="nav-btn" data-tab="help">❓ Help & How-to</button>
         </div>
     </div>
 
@@ -1738,9 +1810,8 @@ trishula-web --host 127.0.0.1 --port 8000</code></pre>
             document.querySelectorAll('[data-tab]').forEach(button => {
                 button.addEventListener('click', () => switchTab(button.dataset.tab));
             });
-            document.getElementById('openFileButton').addEventListener('click', openFileModal);
+            document.getElementById('openFileButton').addEventListener('click', toggleFileLoader);
             document.getElementById('dedupeSelect').addEventListener('change', onDedupeChange);
-            document.getElementById('restartButton').addEventListener('click', triggerServerRestart);
             document.getElementById('printButton').addEventListener('click', exportSelectedTabToPdf);
             document.getElementById('browserFileButton').addEventListener(
                 'click', () => document.getElementById('browserFileInput').click()
@@ -1770,6 +1841,7 @@ trishula-web --host 127.0.0.1 --port 8000</code></pre>
                 stateData = await res.json();
                 if (stateData.loaded) {
                     document.getElementById('loaderCard').style.display = 'none';
+                    document.getElementById('openFileButton').setAttribute('aria-expanded', 'false');
                     document.getElementById('datasetBanner').style.display = 'flex';
                     document.getElementById('activeFileName').innerText = stateData.parquet_file;
                     document.getElementById('activeFileSize').innerText = `(${stateData.file_size_mb} MB)`;
@@ -1780,6 +1852,7 @@ trishula-web --host 127.0.0.1 --port 8000</code></pre>
                     await loadTabData(activeTab);
                 } else {
                     document.getElementById('loaderCard').style.display = 'block';
+                    document.getElementById('openFileButton').setAttribute('aria-expanded', 'true');
                     document.getElementById('datasetBanner').style.display = 'none';
                     resetTabLoads();
                 }
@@ -1805,17 +1878,6 @@ trishula-web --host 127.0.0.1 --port 8000</code></pre>
                 resetTabLoads();
                 await fetchState();
             }
-        }
-
-        async function triggerServerRestart() {
-            if (!confirm("Are you sure you want to restart the Trishula Web Server process?")) return;
-            try {
-                await fetch('/api/restart', { method: 'POST' });
-            } catch(e) {}
-            alert("🔄 Trishula Web Server is restarting... Reloading page!");
-            setTimeout(() => {
-                window.location.reload();
-            }, 1500);
         }
 
         async function exportSelectedTabToPdf() {
@@ -1917,8 +1979,12 @@ trishula-web --host 127.0.0.1 --port 8000</code></pre>
             }
         }
 
-        function openFileModal() {
-            document.getElementById('loaderCard').style.display = 'block';
+        function toggleFileLoader() {
+            const loaderCard = document.getElementById('loaderCard');
+            const loadButton = document.getElementById('openFileButton');
+            const shouldShow = window.getComputedStyle(loaderCard).display === 'none';
+            loaderCard.style.display = shouldShow ? 'block' : 'none';
+            loadButton.setAttribute('aria-expanded', String(shouldShow));
         }
 
         function switchTab(tabName) {
