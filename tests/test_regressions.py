@@ -16,6 +16,7 @@ import server
 from converter import convert_csv_to_parquet, validate_dataset_schema
 from event_parser import (
     calculate_funnel,
+    get_event_frequencies,
     get_transition_pairs,
     run_custom_query,
     sanitize_event_path_sql,
@@ -59,6 +60,24 @@ def test_funnel_honors_consecutive_deduplication(event_dataset):
     )
     assert raw.iloc[-1]["session_count"] == 1
     assert deduped.iloc[-1]["session_count"] == 0
+
+
+def test_event_frequencies_honor_consecutive_and_unique_deduplication(event_dataset):
+    raw = get_event_frequencies(str(event_dataset), top_n=10, dedupe_mode="none")
+    consecutive = get_event_frequencies(
+        str(event_dataset), top_n=10, dedupe_mode="consecutive"
+    )
+    unique = get_event_frequencies(str(event_dataset), top_n=10, dedupe_mode="unique")
+
+    raw_counts = dict(zip(raw["event_name"], raw["occurrence_count"]))
+    consecutive_counts = dict(
+        zip(consecutive["event_name"], consecutive["occurrence_count"])
+    )
+    unique_counts = dict(zip(unique["event_name"], unique["occurrence_count"]))
+
+    assert raw_counts == {"A": 6, "B": 4, "C": 1}
+    assert consecutive_counts == {"A": 5, "B": 4, "C": 1}
+    assert unique_counts == {"A": 4, "B": 4, "C": 1}
 
 
 def test_transition_counts_are_exact_and_dedupe_sensitive(event_dataset):
@@ -367,6 +386,20 @@ def test_dashboard_includes_task_focused_help():
     assert "Dedupe and funnel semantics" in dashboard
     assert "Unload Dataset" in dashboard
     assert "Troubleshooting" in dashboard
+
+
+def test_dashboard_exposes_funnel_and_search_loading_errors():
+    request = Request({"type": "http", "method": "GET", "path": "/", "headers": []})
+    request.state.csp_nonce = "test-nonce"
+    dashboard = server.index(request)
+
+    assert 'id="funnelEventStatus"' in dashboard
+    assert 'id="searchStatus"' in dashboard
+    assert "Loading frequent events…" in dashboard
+    assert "Unable to load events:" in dashboard
+    assert "Unable to calculate funnel:" in dashboard
+    assert "Unable to search sessions:" in dashboard
+    assert "stepName && !selectedFunnelSteps.includes(stepName)" not in dashboard
 
 
 def test_readme_has_no_removed_architecture_or_unverified_performance_claims():
