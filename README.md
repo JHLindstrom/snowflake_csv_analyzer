@@ -98,7 +98,9 @@ The supported web workflow is:
 3. Review KPIs, construct an ordered funnel, inspect the transition matrix, or
    search exact event tokens and contiguous subpaths.
 4. Select **Export Selected Tab to PDF** to print only the analysis tab currently
-   visible. Other tabs are not loaded or included automatically.
+   visible. Other tabs are not loaded or included automatically. Help & How-to
+   exports keep documentation cards, tables, and command examples together
+   across page boundaries.
 5. Select **Unload Dataset** when finished. This deletes the browser-managed
    upload files for the current session.
 

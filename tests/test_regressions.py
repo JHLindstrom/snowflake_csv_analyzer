@@ -506,6 +506,11 @@ def test_dashboard_exports_only_the_selected_tab():
     assert "window.addEventListener('afterprint', restoreUi, {once: true})" in dashboard
     assert "@media print" in dashboard
     assert "thead { display: table-header-group; }" in dashboard
+    assert "body.printing-help #panel-help .glass-card" in dashboard
+    assert "break-inside: avoid-page;" in dashboard
+    assert "white-space: pre-wrap;" in dashboard
+    assert "document.body.classList.add(`printing-${activeTab}`)" in dashboard
+    assert "document.body.classList.remove(`printing-${activeTab}`)" in dashboard
 
 
 def test_dashboard_has_shared_interactive_loading_states():
