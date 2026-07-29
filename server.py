@@ -487,7 +487,7 @@ def index():
 
             return (
                 <div>
-                    <!-- Top Navbar -->
+                    {/* Top Navbar */}
                     <div className="navbar">
                         <div className="brand">
                             <i className="fa-solid fa-trident"></i> TRISHULA WEB
@@ -522,7 +522,7 @@ def index():
                     </div>
 
                     <div className="container">
-                        <!-- File Picker Modal / Banner -->
+                        {/* File Picker Modal / Banner */}
                         {(!state || !state.loaded || showFileModal) && (
                             <div className="glass-card" style={{border: '2px solid rgba(56, 189, 248, 0.4)', background: 'rgba(15, 23, 42, 0.95)', padding: '36px', textAlign: 'center'}}>
                                 <i className="fa-solid fa-file-csv" style={{fontSize: '48px', color: '#38bdf8', marginBottom: '16px'}}></i>
@@ -550,7 +550,7 @@ def index():
                                 </div>
                             </div>
                         )}
-                        <!-- File Status -->
+                        {/* File Status */}
                         {state && state.loaded && (
                             <div className="glass-card" style={{padding: '16px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
                                 <div>
@@ -562,7 +562,7 @@ def index():
                             </div>
                         )}
 
-                        <!-- Tab 1: Executive KPIs -->
+                        {/* Tab 1: Executive KPIs */}
                         {activeTab === 'overview' && insights && (
                             <div>
                                 <div className="kpi-grid">
@@ -628,7 +628,7 @@ def index():
                             </div>
                         )}
 
-                        <!-- Tab 2: Funnel Retention Builder -->
+                        {/* Tab 2: Funnel Retention Builder */}
                         {activeTab === 'funnel' && (
                             <div>
                                 <div className="glass-card">
@@ -692,7 +692,7 @@ def index():
                             </div>
                         )}
 
-                        <!-- Tab 3: Heatmap Matrix -->
+                        {/* Tab 3: Heatmap Matrix */}
                         {activeTab === 'heatmap' && heatmapData && (
                             <div className="glass-card">
                                 <h3><i className="fa-solid fa-fire" style={{color: '#fb7185'}}></i> Event Transition Heatmap Matrix</h3>
@@ -726,7 +726,7 @@ def index():
                             </div>
                         )}
 
-                        <!-- Tab 4: Session Explorer -->
+                        {/* Tab 4: Session Explorer */}
                         {activeTab === 'search' && (
                             <div className="glass-card">
                                 <h3><i className="fa-solid fa-magnifying-glass" style={{color: '#38bdf8'}}></i> Session Search & Explorer</h3>
