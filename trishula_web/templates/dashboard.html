@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trishula Web - Session & Funnel Intelligence Dashboard</title>
+    <link rel="stylesheet" href="/static/dashboard.css">
+</head>
+<body>
+    <!-- Top Navbar -->
+    <div class="navbar">
+        <div class="brand" aria-label="Trishula Web">
+            <span class="brand-icon" aria-hidden="true">♆︎</span>
+            <span class="brand-copy"><span>TRISHULA</span><span>WEB</span></span>
+        </div>
+        <div class="nav-items">
+            <button class="nav-btn active" data-tab="overview">📊 Executive KPIs</button>
+            <button class="nav-btn" data-tab="funnel">🎛️ Funnel Retention</button>
+            <button class="nav-btn" data-tab="heatmap">🔥 Transition Matrix</button>
+            <button class="nav-btn" data-tab="search">🔎 Session Explorer</button>
+        </div>
+        <div class="nav-actions">
+            <button class="nav-btn" id="openFileButton" aria-controls="loaderCard" aria-expanded="false">📁 Load Dataset</button>
+            <select id="dedupeSelect">
+                <option value="consecutive">Dedupe: Consecutive</option>
+                <option value="unique">Dedupe: Unique</option>
+                <option value="none">Dedupe: None (Raw)</option>
+            </select>
+            <button class="btn-action" id="printButton" title="Exports only the currently selected analysis tab">🖨️ Export Selected Tab to PDF</button>
+            <button class="nav-btn" data-tab="help">❓ Help & How-to</button>
+        </div>
+    </div>
+
+    <div class="container">
+        <!-- Dataset Loader Card -->
+        <div id="loaderCard" class="glass-card" style="border: 2px solid rgba(56, 189, 248, 0.4); background: rgba(15, 23, 42, 0.95); padding: 36px; text-align: center;">
+            <h2 style="margin: 0 0 8px 0;">Select Dataset File</h2>
+            <p style="color: #94a3b8; margin: 0 0 24px 0;">Choose a CSV or Parquet export to upload:</p>
+
+            <div style="display: flex; gap: 12px; max-width: 700px; margin: 0 auto; justify-content: center; flex-wrap: wrap;">
+                <button class="btn-action" id="browserFileButton" style="padding: 12px 24px; font-size: 15px;">
+                    📤 Upload CSV/Parquet
+                </button>
+                <input id="browserFileInput" type="file" accept=".csv,.parquet" style="display: none;" />
+            </div>
+
+            <div id="fileError" style="color: #fb7185; margin-top: 16px; font-weight: bold; display: none;"></div>
+        </div>
+
+        <!-- Active Dataset Banner -->
+        <div id="datasetBanner" class="glass-card" style="padding: 16px 24px; display: none; justify-content: space-between; align-items: center;">
+            <div>
+                <span style="color: #94a3b8; font-size: 13px;">ACTIVE DATASET:</span>
+                <strong id="activeFileName" style="margin-left: 8px; color: #38bdf8;">-</strong>
+                <span id="activeFileSize" style="margin-left: 12px; color: #94a3b8;">-</span>
+            </div>
+            <div style="display:flex;gap:10px;align-items:center;">
+                <span id="storageStatus" class="tag-pill">Storage: checking…</span>
+                <span id="duckdbStatus" class="tag-pill">⚡ DuckDB: checking limits…</span>
+                <button id="unloadButton" class="btn-secondary">Unload Dataset</button>
+            </div>
+        </div>
+
+        <!-- Tab 1: Executive KPIs -->
+        <div id="panel-overview" class="tab-panel active">
+            <div class="kpi-grid">
+                <div class="kpi-card">
+                    <div class="kpi-title">Total Sessions Analyzed</div>
+                    <div id="kpi-sessions" class="kpi-val">-</div>
+                </div>
+                <div class="kpi-card">
+                    <div class="kpi-title">Bounce Rate</div>
+                    <div id="kpi-bounce" class="kpi-val" style="color: #34d399;">-</div>
+                </div>
+                <div class="kpi-card">
+                    <div class="kpi-title">Avg Events / Session</div>
+                    <div id="kpi-avg" class="kpi-val">-</div>
+                </div>
+                <div class="kpi-card">
+                    <div class="kpi-title">Median Length (p50)</div>
+                    <div id="kpi-median" class="kpi-val">-</div>
+                </div>
+                <div class="kpi-card">
+                    <div class="kpi-title">90th Percentile Length</div>
+                    <div id="kpi-p90" class="kpi-val" style="color: #fb7185;">-</div>
+                </div>
+            </div>
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 24px;">
+                <div class="glass-card">
+                    <h3 style="color: #34d399;">Top Session Entry Points</h3>
+                    <table id="entryTable">
+                        <thead><tr><th>Entry Event</th><th>Sessions</th><th>Share %</th></tr></thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+
+                <div class="glass-card">
+                    <h3 style="color: #fb7185;">Top Session Exit Points</h3>
+                    <table id="exitTable">
+                        <thead><tr><th>Exit Event</th><th>Sessions</th><th>Share %</th></tr></thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tab 2: Funnel Retention Builder -->
+        <div id="panel-funnel" class="tab-panel">
+            <!-- Explanatory Box -->
+            <div class="info-box">
+                💡 <strong>How Funnel Retention Analysis Works:</strong><br/>
+                A <strong>Funnel</strong> measures how many user sessions complete an ordered sequence of user steps (e.g. <code>Home → Product_View → Checkout</code>).
+                The analysis tracks session progression step-by-step and calculates drop-off rates between consecutive stages.
+                Use the 1-click presets or choose steps from your dataset below to build your funnel!
+            </div>
+
+            <div class="glass-card">
+                <h3 style="color: #38bdf8; margin-top: 0;">🎛️ Funnel Retention & Conversion Flow</h3>
+
+                <!-- Quick Preset Flow Buttons -->
+                <div style="margin-bottom: 20px;">
+                    <span style="font-size: 13px; color: #94a3b8; font-weight: bold; margin-right: 10px;">QUICK PRESETS:</span>
+                    <button class="chip-btn funnel-preset" data-preset="top" disabled>⚡ Top 4 Frequent Events</button>
+                    <button class="chip-btn funnel-preset" data-preset="checkout" style="margin-left: 6px;" disabled>🛒 E-Commerce Checkout Flow</button>
+                    <button class="chip-btn funnel-preset" data-preset="search" style="margin-left: 6px;" disabled>🔍 Search Discovery Flow</button>
+                    <button class="chip-btn" id="clearFunnelButton" style="margin-left: 6px; background: rgba(251, 113, 133, 0.15); color: #fb7185; border-color: rgba(251, 113, 133, 0.3);">🗑️ Clear All</button>
+                </div>
+                <div id="funnelEventStatus" role="status" aria-live="polite" style="color: #94a3b8; margin-bottom: 12px;">
+                    Open this tab to load available events.
+                </div>
+
+                <!-- Funnel Step Tiles -->
+                <div id="funnelPills" style="display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; min-height: 42px; padding: 12px; background: rgba(15, 23, 42, 0.5); border-radius: 12px; border: 1px dashed var(--card-border);"></div>
+
+                <!-- Add Step Selector -->
+                <div style="display: flex; gap: 12px; align-items: center;">
+                    <select id="addEventSelect">
+                        <option value="">+ Select Event Step to Add...</option>
+                    </select>
+                    <button class="primary-btn" id="calculateFunnelButton" disabled>Calculate Funnel</button>
+                    <span style="font-size: 13px; color: #64748b;">(Steps are evaluated in chronological order)</span>
+                </div>
+            </div>
+
+            <div class="glass-card">
+                <h3>Step Conversion & Retention Breakdown</h3>
+                <table id="funnelMetricsTable">
+                    <thead>
+                        <tr>
+                            <th>Step #</th>
+                            <th>Event Step Name</th>
+                            <th>Qualifying Sessions</th>
+                            <th>Step Conversion %</th>
+                            <th>Step Drop-Off %</th>
+                            <th style="width: 35%;">Retention Bar</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Tab 3: Heatmap Matrix -->
+        <div id="panel-heatmap" class="tab-panel">
+            <div class="glass-card">
+                <h3 style="color: #fb7185;">Event Transition Heatmap Matrix</h3>
+                <p style="color: #94a3b8; font-size: 14px;">Source x Target event-to-event flow intensity matrix:</p>
+                <div id="heatmapStatus" role="status" aria-live="polite" style="color: #94a3b8; margin-top: 16px;">
+                    Load a dataset to calculate transitions.
+                </div>
+
+                <div style="overflow-x: auto;">
+                    <table id="heatmapTable" style="margin-top: 20px; display: none;">
+                        <thead></thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tab 4: Session Explorer -->
+        <div id="panel-search" class="tab-panel">
+            <!-- Explanatory Box -->
+            <div class="info-box">
+                🔍 <strong>How the Session Explorer Works:</strong><br/>
+                The <strong>Session Explorer</strong> allows you to inspect actual user navigation journeys. You can search for sessions containing specific event actions or filter by exact subpath sequences (e.g. <code>Search → Home</code>). Click any pre-populated quick filter below to explore sessions instantly!
+            </div>
+
+            <div class="glass-card">
+                <h3 style="color: #38bdf8; margin-top: 0;">🔎 Session Search & Journey Inspector</h3>
+
+                <!-- Pre-populated Quick Filter Chips -->
+                <div style="margin-bottom: 20px;">
+                    <span style="font-size: 13px; color: #94a3b8; font-weight: bold; margin-right: 10px;">PRE-POPULATED QUICK FILTERS:</span>
+                    <div id="quickSearchChips" style="display: inline-flex; flex-wrap: wrap; gap: 8px; margin-top: 8px;"></div>
+                </div>
+
+                <div style="display: flex; gap: 16px; margin: 20px 0;">
+                    <input id="searchEventInput" placeholder="Filter by event name (e.g. VehicleView or Search)" style="flex: 1;" />
+                    <input id="searchSubpathInput" placeholder="Filter by subpath sequence (e.g. Search->Home)" style="flex: 1;" />
+                    <button class="btn-action" id="searchButton">🔎 Search Sessions</button>
+                </div>
+                <div id="searchStatus" role="status" aria-live="polite" style="color: #94a3b8; margin-bottom: 12px;"></div>
+                <div id="sessionControls" class="session-controls">
+                    <span style="color: #64748b; font-size: 12px;">Consecutive repeated events are grouped.</span>
+                    <button class="btn-secondary" id="collapseAllSessionsButton" disabled>Collapse expanded journeys</button>
+                </div>
+
+                <table id="searchTable">
+                    <thead>
+                        <tr>
+                            <th class="session-column">Session ID</th>
+                            <th>User Event Navigation Journey (Breadcrumbs)</th>
+                            <th class="events-column">Total Events</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Tab 5: Help and How-to -->
+        <div id="panel-help" class="tab-panel">
+            <div class="info-box">
+                <strong>Localhost support model:</strong> Trishula is designed
+                for one trusted user on the same workstation. Keep the server
+                bound to <code>127.0.0.1</code>.
+            </div>
+
+            <div class="glass-card">
+                <h2>Quick start</h2>
+                <ol>
+                    <li>Select a CSV or Parquet file with <strong>Upload CSV/Parquet</strong>.</li>
+                    <li>Confirm the active filename, managed size, and free disk space.</li>
+                    <li>Review Executive KPIs, then build an ordered funnel or inspect transitions.</li>
+                    <li>Use Session Explorer for exact event-token and contiguous-subpath searches.</li>
+                    <li>Export only the visible analysis with <strong>Export Selected Tab to PDF</strong>, or unload the dataset when finished.</li>
+                </ol>
+            </div>
+
+            <div class="glass-card">
+                <h2>Required dataset schema</h2>
+                <table>
+                    <thead><tr><th>Column</th><th>Purpose</th><th>Example</th></tr></thead>
+                    <tbody>
+                        <tr><td><code>SESSION</code></td><td>Session identifier</td><td><code>SESS_123</code></td></tr>
+                        <tr><td><code>EVENT_PATH</code></td><td>Ordered event sequence</td><td><code>Home-&gt;Search-&gt;Checkout</code></td></tr>
+                        <tr><td><code>TOTAL_EVENTS</code></td><td>Numeric session depth</td><td><code>3</code></td></tr>
+                    </tbody>
+                </table>
+                <p>Supported path delimiters are <code>-&gt;</code>, comma,
+                <code>&gt;</code>, and pipe. Detection samples the first
+                non-empty paths; provide the delimiter explicitly in the CLI
+                if detection is ambiguous.</p>
+            </div>
+
+            <div class="glass-card">
+                <h2>Dedupe and funnel semantics</h2>
+                <ul>
+                    <li><strong>Consecutive:</strong> <code>A→A→B</code> becomes <code>A→B</code>.</li>
+                    <li><strong>Unique:</strong> retains the first occurrence of each event in source order.</li>
+                    <li><strong>None:</strong> analyzes the raw path.</li>
+                </ul>
+                <p>Sequential funnels require each step to occur after the
+                previous matched step. Intervening events are allowed, and
+                repeated funnel steps such as <code>A→B→A</code> are supported.</p>
+            </div>
+
+            <div class="glass-card">
+                <h2>Storage and safety</h2>
+                <ul>
+                    <li>Browser uploads are streamed into generated filenames under <code>uploads/</code>.</li>
+                    <li><strong>Unload Dataset</strong> deletes the managed browser-upload files for the current session.</li>
+                    <li>Custom SQL and restart require trusted-local mode.</li>
+                    <li>Custom SQL is bounded by configured time and result-row limits and can be cancelled through the job API.</li>
+                </ul>
+            </div>
+
+            <div class="glass-card">
+                <h2>Useful commands</h2>
+                <pre><code>trishula run-all data.csv --funnel "Home,Search,Checkout"
+trishula inspect data.csv --limit 5
+trishula benchmark --rows 1000000 --output-dir ./benchmark-output
+trishula-web --host 127.0.0.1 --port 8000</code></pre>
+                <p>The repository README contains the full command reference,
+                environment-variable reference, test instructions, and
+                advanced security notes.</p>
+            </div>
+
+            <div class="glass-card">
+                <h2>Troubleshooting</h2>
+                <ul>
+                    <li><strong>Missing columns:</strong> export or rename fields to the required uppercase schema.</li>
+                    <li><strong>Incorrect funnel counts:</strong> verify delimiter detection and selected dedupe mode.</li>
+                    <li><strong>Empty transition matrix:</strong> wait for calculation to finish, then check the displayed status. Sessions containing only one event legitimately have no transitions.</li>
+                    <li><strong>Out of memory:</strong> lower <code>TRISHULA_DUCKDB_MEMORY_LIMIT</code> and confirm sufficient temporary disk space.</li>
+                    <li><strong>High CPU usage:</strong> lower <code>TRISHULA_DUCKDB_THREADS</code>; the dataset banner shows the active thread and memory limits.</li>
+                    <li><strong>Slow analytics:</strong> tabs load on demand and heavy queries are serialized by default. Benchmark before increasing <code>TRISHULA_DUCKDB_THREADS</code> or <code>TRISHULA_MAX_CONCURRENT_ANALYTICS</code>.</li>
+                    <li><strong>Loading indicator remains visible:</strong> review its current stage and elapsed time. After ten seconds Trishula confirms that the operation is still active; large exports can legitimately take several minutes.</li>
+                    <li><strong>Upload rejected:</strong> check file extension, configured upload limit, and CSV/Parquet validity.</li>
+                    <li><strong>Trusted feature returns 403:</strong> restart with <code>TRISHULA_TRUSTED_LOCAL_MODE=true</code> only on a trusted workstation.</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <div class="loading-overlay" id="loadingOverlay" role="status" aria-live="polite" aria-hidden="true">
+        <div class="loading-card">
+            <div class="loading-heading">
+                <div class="loading-orbit" aria-hidden="true"></div>
+                <h2 id="loadingTitle">Working on your analysis</h2>
+            </div>
+            <div class="loading-stage" id="loadingStage">Preparing…</div>
+            <div class="loading-progress-track indeterminate" id="loadingProgressTrack">
+                <div class="loading-progress-bar" id="loadingProgressBar"></div>
+            </div>
+            <div class="loading-meta">
+                <span id="loadingProgressLabel">Working…</span>
+                <span id="loadingElapsed"></span>
+            </div>
+            <div class="loading-long-hint" id="loadingLongHint">
+                Still working. Larger datasets can take several minutes; Trishula has not stopped.
+            </div>
+            <div class="loading-skeleton" aria-hidden="true"><span></span><span></span><span></span></div>
+        </div>
+    </div>
+
+    <script nonce="__CSP_NONCE__" src="/static/dashboard.js"></script>
+</body>
+</html>

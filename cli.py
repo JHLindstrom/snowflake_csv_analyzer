@@ -39,6 +39,7 @@ from visualizer import (
 )
 from errors import TrishulaError
 from benchmark import run_benchmark
+from performance_profile import run_performance_profile
 
 console = Console()
 
@@ -66,6 +67,17 @@ def handle_benchmark(args):
         if value is not None:
             table.add_row(key.replace("_", " ").title(), str(value))
     console.print(table)
+
+
+def handle_profile(args):
+    console.print(
+        f"[bold yellow][*] Profiling synthetic benchmark with {args.rows:,} rows...[/bold yellow]"
+    )
+    result = run_performance_profile(
+        args.rows, args.output_dir, top_functions=args.top_functions
+    )
+    console.print(f"[bold green]Profile:[/bold green] {result['profile']}")
+    console.print(f"[bold green]Summary:[/bold green] {result['summary']}")
 
 def handle_inspect(args):
     res = inspect_file(args.file_path, limit=args.limit)
@@ -476,6 +488,13 @@ def main():
     benchmark_p.add_argument("-o", "--output-dir", help="Keep artifacts and write benchmark-results.json")
     benchmark_p.add_argument("--keep", action="store_true", help="Keep temporary benchmark files")
 
+    profile_p = subparsers.add_parser(
+        "profile", help="Profile the synthetic benchmark and save CPU statistics"
+    )
+    profile_p.add_argument("-r", "--rows", type=int, default=100000)
+    profile_p.add_argument("-o", "--output-dir", default="./profile-output")
+    profile_p.add_argument("--top-functions", type=int, default=40)
+
     # Subcommand: inspect
     inspect_p = subparsers.add_parser("inspect", help="Inspect schema, row count, and sample data")
     inspect_p.add_argument("file_path", help="CSV or Parquet filepath")
@@ -563,6 +582,8 @@ def main():
             handle_generate_mock(args)
         elif args.command == "benchmark":
             handle_benchmark(args)
+        elif args.command == "profile":
+            handle_profile(args)
         elif args.command == "inspect":
             handle_inspect(args)
         elif args.command == "convert":

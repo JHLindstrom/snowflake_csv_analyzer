@@ -27,6 +27,20 @@ from event_parser import (
 from visualizer import export_html_report
 from benchmark import run_benchmark
 from insights import get_transition_matrix
+from trishula_web.pdf_reports import build_selected_tab_pdf
+from performance_profile import run_performance_profile
+
+
+def _dashboard_source(request):
+    """Return the rendered shell and extracted assets for source-level assertions."""
+    web_root = Path(server.WEB_ROOT)
+    return "\n".join(
+        [
+            server.index(request),
+            (web_root / "static" / "dashboard.css").read_text(encoding="utf-8"),
+            (web_root / "static" / "dashboard.js").read_text(encoding="utf-8"),
+        ]
+    )
 
 
 @pytest.fixture()
@@ -328,13 +342,17 @@ def test_dangerous_http_features_are_disabled_by_default(monkeypatch):
 
 
 def test_browser_upload_is_the_only_dataset_loading_workflow():
-    routes = {(route.path, method) for route in server.app.routes for method in route.methods}
+    routes = {
+        (route.path, method)
+        for route in server.app.routes
+        for method in getattr(route, "methods", ())
+    }
     assert ("/api/upload-file", "POST") in routes
     assert not any(path in {"/api/browse-file", "/api/load-file"} for path, _ in routes)
 
     request = Request({"type": "http", "method": "GET", "path": "/", "headers": []})
     request.state.csp_nonce = "test-nonce"
-    html = server.index(request)
+    html = _dashboard_source(request)
     assert "Upload CSV/Parquet" in html
     assert "heatmapStatus" in html
     assert "Calculating transition matrix" in html
@@ -347,7 +365,7 @@ def test_dashboard_loads_only_the_active_tab_on_startup():
     request = Request({"type": "http", "method": "GET", "path": "/", "headers": []})
     request.state.csp_nonce = "test-nonce"
 
-    dashboard = server.index(request)
+    dashboard = _dashboard_source(request)
 
     assert "loadAllData" not in dashboard
     assert "loadTabData(activeTab)" in dashboard
@@ -437,9 +455,9 @@ def test_dashboard_uses_nonce_and_has_no_inline_event_handlers():
     request = Request({"type": "http", "method": "GET", "path": "/", "headers": []})
     request.state.csp_nonce = "test-nonce"
 
-    dashboard = server.index(request)
+    dashboard = _dashboard_source(request)
 
-    assert '<script nonce="test-nonce">' in dashboard
+    assert '<script nonce="test-nonce" src="/static/dashboard.js"></script>' in dashboard
     assert "onclick=" not in dashboard
     assert "onchange=" not in dashboard
 
@@ -447,7 +465,7 @@ def test_dashboard_uses_nonce_and_has_no_inline_event_handlers():
 def test_dashboard_includes_task_focused_help():
     request = Request({"type": "http", "method": "GET", "path": "/", "headers": []})
     request.state.csp_nonce = "test-nonce"
-    dashboard = server.index(request)
+    dashboard = _dashboard_source(request)
     assert "Help &amp; How-to" not in dashboard
     assert "Help & How-to" in dashboard
     assert "Required dataset schema" in dashboard
@@ -460,7 +478,7 @@ def test_dashboard_includes_task_focused_help():
 def test_dashboard_exposes_funnel_and_search_loading_errors():
     request = Request({"type": "http", "method": "GET", "path": "/", "headers": []})
     request.state.csp_nonce = "test-nonce"
-    dashboard = server.index(request)
+    dashboard = _dashboard_source(request)
 
     assert 'id="funnelEventStatus"' in dashboard
     assert 'id="searchStatus"' in dashboard
@@ -479,7 +497,7 @@ def test_dashboard_exposes_funnel_and_search_loading_errors():
 def test_dashboard_compacts_and_expands_session_journeys():
     request = Request({"type": "http", "method": "GET", "path": "/", "headers": []})
     request.state.csp_nonce = "test-nonce"
-    dashboard = server.index(request)
+    dashboard = _dashboard_source(request)
 
     assert 'id="collapseAllSessionsButton"' in dashboard
     assert 'id="expandAllSessionsButton"' not in dashboard
@@ -493,30 +511,48 @@ def test_dashboard_compacts_and_expands_session_journeys():
 def test_dashboard_exports_only_the_selected_tab():
     request = Request({"type": "http", "method": "GET", "path": "/", "headers": []})
     request.state.csp_nonce = "test-nonce"
-    dashboard = server.index(request)
+    dashboard = _dashboard_source(request)
 
     assert "Export Selected Tab to PDF" in dashboard
-    assert "Selected tab only" in dashboard
     assert "exportSelectedTabToPdf" in dashboard
     assert "await loadTabData(activeTab)" in dashboard
     assert "Preparing selected tab…" in dashboard
-    assert "tab-panel.active" in dashboard
-    assert "landscapeTabs.has(activeTab)" in dashboard
-    assert "previousExpandedRows" in dashboard
-    assert "window.addEventListener('afterprint', restoreUi, {once: true})" in dashboard
-    assert "@media print" in dashboard
-    assert "thead { display: table-header-group; }" in dashboard
-    assert "body.printing-help #panel-help .glass-card" in dashboard
-    assert "break-inside: avoid-page;" in dashboard
-    assert "white-space: pre-wrap;" in dashboard
-    assert "document.body.classList.add(`printing-${activeTab}`)" in dashboard
-    assert "document.body.classList.remove(`printing-${activeTab}`)" in dashboard
+    assert "collectPdfBlocks(panel)" in dashboard
+    assert "fetch('/api/export-pdf'" in dashboard
+    assert "response.blob()" in dashboard
+    assert "window.print()" not in dashboard
+
+
+def test_selected_tab_pdf_is_generated_locally_and_bounded():
+    payload = {
+        "tab": "help",
+        "title": "Trishula - Help & How-to",
+        "dataset": "events.parquet",
+        "dedupe": "Dedupe: Consecutive",
+        "generated_at": "2026-07-29 20:00",
+        "blocks": [
+            {"type": "heading", "text": "Quick start"},
+            {"type": "paragraph", "text": "Load a dataset and inspect the results."},
+            {
+                "type": "table",
+                "rows": [["Column", "Purpose"], ["SESSION", "Session identifier"]],
+            },
+            {"type": "code", "text": "trishula web"},
+        ],
+    }
+    pdf = build_selected_tab_pdf(payload)
+    assert pdf.startswith(b"%PDF-")
+    assert len(pdf) > 1_000
+
+    oversized = dict(payload, blocks=[{"type": "paragraph", "text": "x"}] * 601)
+    with pytest.raises(ValueError, match="too many"):
+        build_selected_tab_pdf(oversized)
 
 
 def test_dashboard_has_shared_interactive_loading_states():
     request = Request({"type": "http", "method": "GET", "path": "/", "headers": []})
     request.state.csp_nonce = "test-nonce"
-    dashboard = server.index(request)
+    dashboard = _dashboard_source(request)
 
     assert 'id="loadingOverlay"' in dashboard
     assert 'id="loadingProgressBar"' in dashboard
@@ -536,7 +572,7 @@ def test_dashboard_has_shared_interactive_loading_states():
 def test_dashboard_has_compact_branding_and_right_aligned_help():
     request = Request({"type": "http", "method": "GET", "path": "/", "headers": []})
     request.state.csp_nonce = "test-nonce"
-    dashboard = server.index(request)
+    dashboard = _dashboard_source(request)
 
     assert 'class="brand-icon"' in dashboard
     assert '<span class="brand-copy"><span>TRISHULA</span><span>WEB</span></span>' in dashboard
@@ -550,7 +586,7 @@ def test_dashboard_has_compact_branding_and_right_aligned_help():
 def test_load_dataset_button_toggles_upload_panel_without_restart_control():
     request = Request({"type": "http", "method": "GET", "path": "/", "headers": []})
     request.state.csp_nonce = "test-nonce"
-    dashboard = server.index(request)
+    dashboard = _dashboard_source(request)
 
     assert 'id="openFileButton" aria-controls="loaderCard" aria-expanded="false"' in dashboard
     assert "function toggleFileLoader()" in dashboard
@@ -572,6 +608,15 @@ def test_application_and_package_versions_match():
     pyproject = Path("pyproject.toml").read_text(encoding="utf-8")
     version = re.search(r'^version = "([^"]+)"', pyproject, re.MULTILINE).group(1)
     assert server.app.version == version
+
+
+def test_performance_profile_writes_reusable_artifacts(tmp_path):
+    result = run_performance_profile(100, tmp_path, top_functions=5)
+    assert Path(result["profile"]).is_file()
+    assert Path(result["summary"]).is_file()
+    assert "function calls" in Path(result["summary"]).read_text(encoding="utf-8")
+    assert result["benchmark"]["rows"] == 100
+    assert (tmp_path / "benchmark-results.json").is_file()
 
 
 def test_standalone_report_is_self_contained_and_escapes_labels(tmp_path):

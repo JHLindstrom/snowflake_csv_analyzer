@@ -29,7 +29,7 @@ Named after the divine trident (**Trishula**), representing three unified pillar
   - Top Session Entry (starting) and Exit (drop-off) points.
 - 🔥 **Transition Matrix Heatmaps**:
   - Color-coded terminal heatmaps.
-  - Exportable, self-contained HTML dashboards with print/PDF support.
+  - Exportable, self-contained HTML dashboards and deterministic local PDF reports.
 - 📉 **Funnel Retention & Drop-off Intelligence**:
   - Auto-detected top N event reach & penetration analysis.
   - Ordered multi-step funnel matching, including repeated steps.
@@ -97,10 +97,10 @@ The supported web workflow is:
 2. Confirm its managed size and available disk space.
 3. Review KPIs, construct an ordered funnel, inspect the transition matrix, or
    search exact event tokens and contiguous subpaths.
-4. Select **Export Selected Tab to PDF** to print only the analysis tab currently
-   visible. Other tabs are not loaded or included automatically. Help & How-to
-   exports keep documentation cards, tables, and command examples together
-   across page boundaries.
+4. Select **Export Selected Tab to PDF** to download a deterministic local PDF
+   containing only the visible analysis tab. Other tabs are not loaded or
+   included automatically. Help & How-to exports keep documentation cards,
+   tables, and command examples together across page boundaries.
 5. Select **Unload Dataset** when finished. This deletes the browser-managed
    upload files for the current session.
 
@@ -209,6 +209,19 @@ Start with a small smoke run, then increase row counts until they represent the
 largest expected local export. Benchmark on the same disk and memory
 configuration used for real analysis.
 
+### 12. `profile` (CPU Bottleneck Profile)
+
+Runs the synthetic pipeline under Python's deterministic profiler and writes
+benchmark JSON, a reusable `.pstats` file, and a cumulative-time summary:
+
+```bash
+trishula profile --rows 100000 --output-dir ./profile-output
+```
+
+Repeat the command with a representative production-sized export when one is
+available. Synthetic results identify code-level hotspots but are not a
+substitute for the final production workload.
+
 ---
 
 ## 🔒 Security & Data Privacy
@@ -236,6 +249,7 @@ export TRISHULA_MAX_QUERY_ROWS=10000
 export TRISHULA_QUERY_JOB_TTL_SECONDS=3600
 export TRISHULA_SESSION_TTL_SECONDS=86400
 export TRISHULA_SESSION_DB=/absolute/path/to/sessions.sqlite3
+export TRISHULA_UPLOAD_DIR=/absolute/path/to/managed-uploads
 export TRISHULA_TRUSTED_LOCAL_MODE=true       # only when explicitly needed
 python3 cli.py web
 ```
@@ -244,6 +258,11 @@ Uploads are streamed to generated filenames under `uploads/`; client-provided
 paths are never used as destination paths. Each browser receives an isolated
 dataset session through an HttpOnly, same-site cookie. Expired sessions and
 their managed upload files are removed automatically.
+
+The web implementation is split by responsibility: `server.py` owns FastAPI
+routes and application state, while `trishula_web/templates/` and
+`trishula_web/static/` contain the dashboard shell, stylesheet, and browser
+logic. `trishula_web/pdf_reports.py` owns bounded server-side PDF generation.
 
 The dashboard loads analytics on demand when a tab is first opened instead of
 starting every query after upload. DuckDB-heavy API operations share a bounded
@@ -285,6 +304,14 @@ python3 cli.py web --host 0.0.0.0
 python3 -m pip install -e ".[test]"
 python3 -m pytest -q
 python3 test_analyzer.py
+```
+
+Browser-level tests run separately because they install an isolated Chromium:
+
+```bash
+python3 -m pip install -e ".[browser-test]"
+python3 -m playwright install chromium
+python3 -m pytest -q tests/test_browser.py
 ```
 
 ---
