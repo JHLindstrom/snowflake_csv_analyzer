@@ -13,6 +13,7 @@ from fastapi import HTTPException, UploadFile
 from starlette.requests import Request
 
 import server
+import event_parser
 from converter import convert_csv_to_parquet, validate_dataset_schema
 from duckdb_config import create_duckdb_connection, get_duckdb_settings
 from event_parser import (
@@ -61,6 +62,33 @@ def test_funnel_honors_consecutive_deduplication(event_dataset):
     )
     assert raw.iloc[-1]["session_count"] == 1
     assert deduped.iloc[-1]["session_count"] == 0
+
+
+def test_funnel_executes_one_duckdb_query(event_dataset, monkeypatch):
+    connection = create_duckdb_connection()
+    executions = []
+
+    class CountingConnection:
+        def execute(self, query, *args):
+            executions.append(query)
+            return connection.execute(query, *args)
+
+        def close(self):
+            connection.close()
+
+    monkeypatch.setattr(event_parser, "_connect", lambda: CountingConnection())
+
+    result = event_parser.calculate_funnel(
+        str(event_dataset), ["A", "B", "A"], dedupe_mode="consecutive"
+    )
+
+    assert result["session_count"].tolist() == [4, 3, 1]
+    assert len(executions) == 1
+
+
+def test_funnel_rejects_empty_steps(event_dataset):
+    with pytest.raises(ValueError, match="cannot be empty"):
+        calculate_funnel(str(event_dataset), ["A", " "])
 
 
 def test_event_frequencies_honor_consecutive_and_unique_deduplication(event_dataset):
@@ -441,6 +469,11 @@ def test_dashboard_exposes_funnel_and_search_loading_errors():
     assert "Unable to calculate funnel:" in dashboard
     assert "Unable to search sessions:" in dashboard
     assert "stepName && !selectedFunnelSteps.includes(stepName)" not in dashboard
+    assert 'id="calculateFunnelButton"' in dashboard
+    load_events_source = dashboard.split("async function loadEvents()", 1)[1].split(
+        "function renderFunnelPills()", 1
+    )[0]
+    assert "await loadFunnel()" not in load_events_source
 
 
 def test_readme_has_no_removed_architecture_or_unverified_performance_claims():
