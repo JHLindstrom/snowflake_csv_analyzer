@@ -1,6 +1,7 @@
 import sys
 import os
 import argparse
+import subprocess
 import duckdb
 import pandas as pd
 from typing import Optional, List
@@ -9,7 +10,7 @@ user_site = os.path.expanduser("~/Library/Python/3.9/lib/python/site-packages")
 if os.path.exists(user_site) and user_site not in sys.path:
     sys.path.insert(0, user_site)
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, UploadFile, File
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
@@ -45,6 +46,9 @@ ACTIVE_FILE = None
 ACTIVE_DELIMITER = "->"
 ACTIVE_PARQUET = None
 
+UPLOAD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads")
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+
 def init_active_file(file_path: str, delimiter: str = "->"):
     global ACTIVE_FILE, ACTIVE_DELIMITER, ACTIVE_PARQUET
     if not os.path.exists(file_path):
@@ -62,6 +66,32 @@ def init_active_file(file_path: str, delimiter: str = "->"):
         ACTIVE_PARQUET = file_path
         
     ACTIVE_DELIMITER = detect_delimiter(ACTIVE_PARQUET) if delimiter == "->" else delimiter
+
+@app.get("/api/browse-file")
+def browse_file():
+    """Opens native macOS Finder file open dialog window."""
+    try:
+        cmd = 'osascript -e "POSIX path of (choose file with prompt \\"Select Snowflake CSV or Parquet file:\\")"'
+        output = subprocess.check_output(cmd, shell=True, timeout=120).decode('utf-8').strip()
+        if output and os.path.exists(output):
+            init_active_file(output)
+            return {"success": True, "filepath": output, "state": get_state()}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+    return {"success": False, "error": "No file selected"}
+
+@app.post("/api/upload-file")
+async def upload_file(file: UploadFile = File(...)):
+    """Uploads a CSV or Parquet file via browser file selector."""
+    try:
+        dest_path = os.path.join(UPLOAD_DIR, file.filename)
+        with open(dest_path, "wb") as f:
+            content = await file.read()
+            f.write(content)
+        init_active_file(dest_path)
+        return {"success": True, "filepath": dest_path, "state": get_state()}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 @app.post("/api/load-file")
 def load_file(payload: dict):
@@ -276,6 +306,21 @@ def index():
         }
         .btn-action:hover { opacity: 0.9; transform: scale(1.02); }
 
+        .btn-secondary {
+            background: rgba(255, 255, 255, 0.08);
+            color: var(--text-main);
+            border: 1px solid var(--card-border);
+            padding: 10px 20px;
+            border-radius: 10px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .btn-secondary:hover { background: rgba(255, 255, 255, 0.15); }
+
         .tag-pill {
             background: rgba(56, 189, 248, 0.1);
             color: var(--accent-cyan);
@@ -345,12 +390,27 @@ def index():
     <div class="container">
         <!-- Dataset Loader Card -->
         <div id="loaderCard" class="glass-card" style="border: 2px solid rgba(56, 189, 248, 0.4); background: rgba(15, 23, 42, 0.95); padding: 36px; text-align: center;">
-            <h2 style="margin: 0 0 8px 0;">Load Dataset File</h2>
-            <p style="color: #94a3b8; margin: 0 0 24px 0;">Enter the absolute path to your Snowflake CSV or Parquet export on your Mac:</p>
+            <h2 style="margin: 0 0 8px 0;">Select Dataset File</h2>
+            <p style="color: #94a3b8; margin: 0 0 24px 0;">Open your macOS Finder file dialog or choose a CSV/Parquet export:</p>
             
-            <div style="display: flex; gap: 12px; max-width: 600px; margin: 0 auto;">
+            <div style="display: flex; gap: 12px; max-width: 700px; margin: 0 auto; justify-content: center; flex-wrap: wrap;">
+                <!-- Button 1: macOS Native Finder Window Chooser -->
+                <button class="btn-action" onclick="triggerNativeFinder()" style="padding: 12px 24px; font-size: 15px;">
+                    📂 Open Finder Window...
+                </button>
+                
+                <!-- Button 2: Browser File Selector -->
+                <button class="btn-secondary" onclick="document.getElementById('browserFileInput').click()" style="padding: 12px 24px; font-size: 15px;">
+                    📤 Upload CSV/Parquet
+                </button>
+                <input id="browserFileInput" type="file" accept=".csv,.parquet" style="display: none;" onchange="handleBrowserFileUpload(this.files)" />
+            </div>
+
+            <div style="margin-top: 20px; color: #64748b; font-size: 13px;">— OR ENTER LOCAL FILE PATH MANUALLY —</div>
+
+            <div style="display: flex; gap: 12px; max-width: 600px; margin: 16px auto 0 auto;">
                 <input id="filePathInput" type="text" placeholder="/path/to/your_snowflake_export.csv" style="flex: 1;" />
-                <button class="btn-action" onclick="submitFileLoad()">⚡ Load Dataset</button>
+                <button class="btn-secondary" onclick="submitFileLoad()">⚡ Load Path</button>
             </div>
 
             <div id="fileError" style="color: #fb7185; margin-top: 16px; font-weight: bold; display: none;"></div>
@@ -511,6 +571,48 @@ def index():
                 }
             } catch (err) {
                 console.error(err);
+            }
+        }
+
+        async function triggerNativeFinder() {
+            const errDiv = document.getElementById('fileError');
+            errDiv.style.display = 'none';
+
+            try {
+                const res = await fetch('/api/browse-file');
+                const data = await res.json();
+                if (data.success && data.filepath) {
+                    document.getElementById('filePathInput').value = data.filepath;
+                    fetchState();
+                } else if (data.error && data.error !== 'No file selected') {
+                    throw new Error(data.error);
+                }
+            } catch (err) {
+                errDiv.innerText = err.message;
+                errDiv.style.display = 'block';
+            }
+        }
+
+        async function handleBrowserFileUpload(files) {
+            if (!files || files.length === 0) return;
+            const file = files[0];
+            const errDiv = document.getElementById('fileError');
+            errDiv.style.display = 'none';
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            try {
+                const res = await fetch('/api/upload-file', {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.detail || 'Upload failed');
+                fetchState();
+            } catch (err) {
+                errDiv.innerText = err.message;
+                errDiv.style.display = 'block';
             }
         }
 
