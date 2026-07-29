@@ -18,6 +18,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskPr
 
 from generate_mock_data import generate_csv
 from converter import convert_csv_to_parquet, inspect_file
+from duckdb_config import get_config_path, get_duckdb_settings
 from event_parser import (
     detect_delimiter,
     get_event_frequencies,
@@ -435,6 +436,19 @@ def handle_run_all(args):
     console.print(f"[bold cyan]👉 file://{abs_report_url}[/bold cyan]\n")
 
 def handle_web(args):
+    try:
+        duckdb_settings = get_duckdb_settings()
+    except ValueError as exc:
+        console.print(f"[bold red][!] Invalid Trishula configuration: {exc}[/bold red]")
+        sys.exit(2)
+    config_path = get_config_path()
+    config_source = str(config_path) if config_path.is_file() else "built-in defaults"
+    console.print(
+        "[dim]DuckDB limits: "
+        f"{duckdb_settings.threads} threads, {duckdb_settings.memory_limit} "
+        f"({config_source})[/dim]"
+    )
+
     import uvicorn
     from server import app, init_active_file
     

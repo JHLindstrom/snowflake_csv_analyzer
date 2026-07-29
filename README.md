@@ -255,6 +255,22 @@ export TRISHULA_TRUSTED_LOCAL_MODE=true       # only when explicitly needed
 python3 cli.py web
 ```
 
+For settings that should persist between terminal sessions, create an ignored
+`trishula.ini` in the directory where Trishula is started:
+
+```ini
+[duckdb]
+memory_limit = 4GB
+threads = 4
+```
+
+The file is optional and is intentionally excluded from Git because appropriate
+limits depend on the workstation. `TRISHULA_DUCKDB_MEMORY_LIMIT` and
+`TRISHULA_DUCKDB_THREADS` override values from the file when they are set.
+Set `TRISHULA_CONFIG_FILE=/absolute/path/to/trishula.ini` to use a configuration
+file outside the working directory. An explicitly configured missing or invalid
+file causes startup or the first analysis to fail with a clear error.
+
 Uploads are streamed to generated filenames under `uploads/`; client-provided
 paths are never used as destination paths. Each browser receives an isolated
 dataset session through an HttpOnly, same-site cookie. Expired sessions and

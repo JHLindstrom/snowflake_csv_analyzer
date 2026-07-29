@@ -10,6 +10,7 @@ ENV/
 .pytest_cache/
 .test-deps/
 .verify-venv/
+trishula.ini
 
 # Data Files (Do not commit large CSV/Parquet data)
 *.csv

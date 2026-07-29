@@ -809,6 +809,10 @@ def main():
     parser.add_argument("--port", "-p", type=int, default=8000, help="Port to run web server on")
     parser.add_argument("--host", type=str, default="127.0.0.1", help="Host binding")
     args = parser.parse_args()
+    try:
+        duckdb_settings = get_duckdb_settings()
+    except ValueError as exc:
+        parser.error(f"Invalid Trishula configuration: {exc}")
     if args.host not in {"127.0.0.1", "localhost", "::1"} and not (
         ACCESS_TOKEN and ALLOW_NETWORK and COOKIE_SECURE
     ):
@@ -821,6 +825,10 @@ def main():
         init_active_file(args.file)
         print(f"[*] Pre-loaded dataset: '{args.file}'")
 
+    print(
+        f"[*] DuckDB limits: {duckdb_settings.threads} threads, "
+        f"{duckdb_settings.memory_limit}"
+    )
     print(f"\n🚀 TRISHULA WEB Dashboard running at: http://{args.host}:{args.port}")
     uvicorn.run(app, host=args.host, port=args.port)
 
