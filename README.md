@@ -96,7 +96,8 @@ The supported web workflow is:
 2. Confirm its managed size and available disk space.
 3. Review KPIs, construct an ordered funnel, inspect the transition matrix, or
    search exact event tokens and contiguous subpaths.
-4. Print or export the current dashboard.
+4. Select **Export Selected Tab to PDF** to print only the analysis tab currently
+   visible. Other tabs are not loaded or included automatically.
 5. Select **Unload Dataset** when finished. This deletes the browser-managed
    upload files for the current session.
 
