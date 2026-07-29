@@ -952,7 +952,72 @@ def index(request: Request):
             display: inline-flex;
             align-items: center;
         }
+        .breadcrumb-pill.match {
+            background: rgba(250, 204, 21, 0.15);
+            border-color: rgba(250, 204, 21, 0.65);
+            color: #fde68a;
+        }
+        .breadcrumb-count {
+            margin-left: 7px;
+            color: #a5b4fc;
+            font-weight: 800;
+        }
         .breadcrumb-arrow { color: #38bdf8; margin: 0 6px; font-weight: bold; }
+        .journey-cell { min-width: 0; }
+        .journey-flow {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 6px 0;
+            line-height: 1.8;
+        }
+        .journey-cell.expanded .journey-flow {
+            background: rgba(15, 23, 42, 0.35);
+            border: 1px solid rgba(56, 189, 248, 0.15);
+            border-radius: 8px;
+            max-height: 420px;
+            overflow-y: auto;
+            padding: 10px;
+        }
+        .journey-overflow {
+            color: #94a3b8;
+            font-size: 12px;
+            font-weight: 700;
+            margin: 0 6px;
+        }
+        .journey-toggle {
+            background: none;
+            border: 0;
+            color: #38bdf8;
+            cursor: pointer;
+            font: inherit;
+            font-size: 12px;
+            font-weight: 700;
+            margin-top: 8px;
+            padding: 3px 0;
+        }
+        .journey-toggle:hover { color: #7dd3fc; text-decoration: underline; }
+        #searchTable { table-layout: fixed; }
+        #searchTable .session-column { width: 180px; }
+        #searchTable .events-column { width: 115px; }
+        #searchTable td { vertical-align: top; }
+        .session-id {
+            color: #38bdf8;
+            display: block;
+            font-family: monospace;
+            font-size: 13px;
+            max-width: 160px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .session-controls {
+            display: none;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 12px;
+        }
+        .session-controls.visible { display: flex; }
 
         table { width: 100%; border-collapse: collapse; margin-top: 16px; font-size: 14px; }
         th, td { padding: 14px 18px; text-align: left; border-bottom: 1px solid var(--card-border); }
@@ -1182,13 +1247,17 @@ def index(request: Request):
                     <button class="btn-action" id="searchButton">🔎 Search Sessions</button>
                 </div>
                 <div id="searchStatus" role="status" aria-live="polite" style="color: #94a3b8; margin-bottom: 12px;"></div>
+                <div id="sessionControls" class="session-controls">
+                    <span style="color: #64748b; font-size: 12px;">Consecutive repeated events are grouped.</span>
+                    <button class="btn-secondary" id="collapseAllSessionsButton" disabled>Collapse expanded journeys</button>
+                </div>
 
                 <table id="searchTable">
                     <thead>
                         <tr>
-                            <th>Session ID</th>
+                            <th class="session-column">Session ID</th>
                             <th>User Event Navigation Journey (Breadcrumbs)</th>
-                            <th>Total Events</th>
+                            <th class="events-column">Total Events</th>
                         </tr>
                     </thead>
                     <tbody></tbody>
@@ -1284,6 +1353,8 @@ trishula-web --host 127.0.0.1 --port 8000</code></pre>
         let stateData = null;
         let selectedFunnelSteps = [];
         let allTopEventsList = [];
+        let currentSessionResults = [];
+        const expandedSessionRows = new Set();
         let activeTab = 'overview';
         const loadedTabs = new Set();
         const tabLoadPromises = new Map();
@@ -1318,6 +1389,10 @@ trishula-web --host 127.0.0.1 --port 8000</code></pre>
                 'change', event => addStepToFunnel(event.target.value)
             );
             document.getElementById('searchButton').addEventListener('click', runSearch);
+            document.getElementById('collapseAllSessionsButton').addEventListener('click', () => {
+                expandedSessionRows.clear();
+                renderSessionResults();
+            });
             document.getElementById('unloadButton').addEventListener('click', unloadDataset);
         });
 
@@ -1718,6 +1793,116 @@ trishula-web --host 127.0.0.1 --port 8000</code></pre>
             runSearch();
         }
 
+        function splitJourney(eventPath) {
+            const delimiter = stateData?.delimiter || '->';
+            return String(eventPath || '').split(delimiter).map(step => step.trim()).filter(Boolean);
+        }
+
+        function matchingJourneyIndexes(steps) {
+            const matches = new Set();
+            const eventFilter = document.getElementById('searchEventInput').value.trim();
+            if (eventFilter) {
+                steps.forEach((step, index) => {
+                    if (step === eventFilter) matches.add(index);
+                });
+            }
+
+            const delimiter = stateData?.delimiter || '->';
+            const subpath = document.getElementById('searchSubpathInput').value.trim();
+            const subpathSteps = subpath
+                ? subpath.split(delimiter).map(step => step.trim()).filter(Boolean)
+                : [];
+            if (subpathSteps.length) {
+                for (let start = 0; start <= steps.length - subpathSteps.length; start += 1) {
+                    if (subpathSteps.every((step, offset) => steps[start + offset] === step)) {
+                        subpathSteps.forEach((_, offset) => matches.add(start + offset));
+                    }
+                }
+            }
+            return matches;
+        }
+
+        function compressJourney(steps, matches) {
+            const groups = [];
+            steps.forEach((step, index) => {
+                const previous = groups[groups.length - 1];
+                if (previous && previous.name === step) {
+                    previous.count += 1;
+                    previous.matched = previous.matched || matches.has(index);
+                    return;
+                }
+                groups.push({name: step, count: 1, matched: matches.has(index)});
+            });
+            return groups;
+        }
+
+        function journeyGroupHtml(group) {
+            if (group.overflow) {
+                return `<span class="journey-overflow">… ${group.count} grouped events …</span>`;
+            }
+            const matchClass = group.matched ? ' match' : '';
+            const count = group.count > 1
+                ? `<span class="breadcrumb-count">×${group.count}</span>`
+                : '';
+            return `<span class="breadcrumb-pill${matchClass}">${escapeHtml(group.name)}${count}</span>`;
+        }
+
+        function compactJourneyGroups(groups) {
+            const previewLimit = 8;
+            if (groups.length <= previewLimit) return groups;
+            const preview = groups.slice(0, previewLimit);
+            const firstHiddenMatch = groups.findIndex((group, index) => index >= previewLimit && group.matched);
+            if (firstHiddenMatch >= 0) {
+                if (firstHiddenMatch > previewLimit) {
+                    preview.push({overflow: true, count: firstHiddenMatch - previewLimit});
+                }
+                preview.push(groups[firstHiddenMatch]);
+            }
+            return preview;
+        }
+
+        function renderSessionResults() {
+            const tbody = document.querySelector('#searchTable tbody');
+            const controls = document.getElementById('sessionControls');
+            controls.classList.toggle('visible', currentSessionResults.length > 0);
+            document.getElementById('collapseAllSessionsButton').disabled = expandedSessionRows.size === 0;
+            tbody.innerHTML = currentSessionResults.map((session, index) => {
+                const steps = splitJourney(session.EVENT_PATH);
+                const groups = compressJourney(steps, matchingJourneyIndexes(steps));
+                const expanded = expandedSessionRows.has(index);
+                const visibleGroups = expanded ? groups : compactJourneyGroups(groups);
+                const breadcrumbs = visibleGroups.map(journeyGroupHtml)
+                    .join('<span class="breadcrumb-arrow">➔</span>');
+                const hiddenCount = Math.max(groups.length - visibleGroups.filter(group => !group.overflow).length, 0);
+                const toggleText = expanded
+                    ? 'Collapse journey'
+                    : `Show complete journey (${groups.length} grouped steps)`;
+
+                return `
+                    <tr>
+                        <td><strong class="session-id">${escapeHtml(session.SESSION)}</strong></td>
+                        <td class="journey-cell${expanded ? ' expanded' : ''}">
+                            <div class="journey-flow">${breadcrumbs}</div>
+                            ${groups.length > 8 ? `
+                                <button type="button" class="journey-toggle" data-session-index="${index}" aria-expanded="${expanded}">
+                                    ${escapeHtml(toggleText)}${!expanded && hiddenCount ? ` · ${hiddenCount} hidden` : ''}
+                                </button>
+                            ` : ''}
+                        </td>
+                        <td><span class="tag-pill">${session.TOTAL_EVENTS} events</span></td>
+                    </tr>
+                `;
+            }).join('');
+            tbody.querySelectorAll('.journey-toggle').forEach(button => {
+                button.addEventListener('click', () => {
+                    const index = Number(button.dataset.sessionIndex);
+                    if (expandedSessionRows.has(index)) expandedSessionRows.delete(index);
+                    else expandedSessionRows.add(index);
+                    renderSessionResults();
+                });
+            });
+        }
+
         async function runSearch() {
             const ev = document.getElementById('searchEventInput').value.trim();
             const sub = document.getElementById('searchSubpathInput').value.trim();
@@ -1738,28 +1923,23 @@ trishula-web --host 127.0.0.1 --port 8000</code></pre>
                 if (!Array.isArray(data)) throw new Error('Invalid search response');
 
                 if (data.length === 0) {
+                    currentSessionResults = [];
+                    expandedSessionRows.clear();
+                    renderSessionResults();
                     status.textContent = 'No matching sessions found.';
                     tbody.innerHTML = `<tr><td colspan="3" style="text-align: center; color: #64748b;">No matching sessions found.</td></tr>`;
                     return;
                 }
 
-                tbody.innerHTML = data.map(s => {
-                    const steps = s.EVENT_PATH.split('->');
-                    const breadcrumbs = steps.map(st => `
-                        <span class="breadcrumb-pill">${escapeHtml(st)}</span>
-                    `).join('<span class="breadcrumb-arrow">➔</span>');
-
-                    return `
-                        <tr>
-                            <td><strong style="color: #38bdf8; font-family: monospace; font-size: 13px;">${escapeHtml(s.SESSION)}</strong></td>
-                            <td>${breadcrumbs}</td>
-                            <td><span class="tag-pill">${s.TOTAL_EVENTS} events</span></td>
-                        </tr>
-                    `;
-                }).join('');
+                currentSessionResults = data;
+                expandedSessionRows.clear();
+                renderSessionResults();
                 status.style.color = '#34d399';
                 status.textContent = `Showing ${data.length} matching sessions.`;
             } catch (err) {
+                currentSessionResults = [];
+                expandedSessionRows.clear();
+                renderSessionResults();
                 status.style.color = '#fb7185';
                 status.textContent = `Unable to search sessions: ${err.message}`;
                 tbody.innerHTML = `<tr><td colspan="3" style="text-align: center; color: #fb7185;">Session search failed.</td></tr>`;

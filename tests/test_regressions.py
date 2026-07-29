@@ -476,6 +476,20 @@ def test_dashboard_exposes_funnel_and_search_loading_errors():
     assert "await loadFunnel()" not in load_events_source
 
 
+def test_dashboard_compacts_and_expands_session_journeys():
+    request = Request({"type": "http", "method": "GET", "path": "/", "headers": []})
+    request.state.csp_nonce = "test-nonce"
+    dashboard = server.index(request)
+
+    assert 'id="collapseAllSessionsButton"' in dashboard
+    assert 'id="expandAllSessionsButton"' not in dashboard
+    assert 'class="journey-toggle"' in dashboard
+    assert "compressJourney(steps, matches)" in dashboard
+    assert "stateData?.delimiter || '->'" in dashboard
+    assert "breadcrumb-pill${matchClass}" in dashboard
+    assert "Consecutive repeated events are grouped." in dashboard
+
+
 def test_readme_has_no_removed_architecture_or_unverified_performance_claims():
     readme = Path("README.md").read_text(encoding="utf-8")
     stale_claims = ["Chart.js", "React", "zero memory overflow", "100x query"]
