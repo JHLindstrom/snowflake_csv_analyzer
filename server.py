@@ -10,6 +10,7 @@ import sqlite3
 import threading
 import time
 import uuid
+from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
@@ -94,6 +95,13 @@ QUERY_TIMEOUT_SECONDS = float(os.getenv("TRISHULA_QUERY_TIMEOUT_SECONDS", "30"))
 SESSION_TTL_SECONDS = int(os.getenv("TRISHULA_SESSION_TTL_SECONDS", "86400"))
 MAX_SQL_CHARS = int(os.getenv("TRISHULA_MAX_SQL_CHARS", "100000"))
 QUERY_JOB_TTL_SECONDS = int(os.getenv("TRISHULA_QUERY_JOB_TTL_SECONDS", "3600"))
+MAX_CONCURRENT_ANALYTICS = max(
+    1, int(os.getenv("TRISHULA_MAX_CONCURRENT_ANALYTICS", "1"))
+)
+ANALYTICS_QUEUE_TIMEOUT_SECONDS = max(
+    0.1, float(os.getenv("TRISHULA_ANALYTICS_QUEUE_TIMEOUT_SECONDS", "30"))
+)
+ANALYTICS_QUERY_SLOTS = threading.BoundedSemaphore(MAX_CONCURRENT_ANALYTICS)
 ACCESS_TOKEN = os.getenv("TRISHULA_ACCESS_TOKEN", "")
 COOKIE_SECURE = os.getenv("TRISHULA_COOKIE_SECURE", "").lower() in {"1", "true", "yes"}
 ALLOW_NETWORK = os.getenv("TRISHULA_ALLOW_NETWORK", "").lower() in {"1", "true", "yes"}
@@ -366,6 +374,26 @@ def _require_trusted_local_mode(feature: str) -> None:
         )
 
 
+@contextmanager
+def _analytics_query_slot():
+    """Bound concurrent DuckDB workloads so per-connection limits remain useful."""
+    acquired = ANALYTICS_QUERY_SLOTS.acquire(
+        timeout=ANALYTICS_QUEUE_TIMEOUT_SECONDS
+    )
+    if not acquired:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Analytics capacity is busy. Wait for the active calculation "
+                "to finish and retry."
+            ),
+        )
+    try:
+        yield
+    finally:
+        ANALYTICS_QUERY_SLOTS.release()
+
+
 def init_active_file(
     file_path: str,
     delimiter: str = "->",
@@ -488,14 +516,18 @@ def unload_dataset():
 @app.get("/api/inspect")
 def inspect():
     state = _require_dataset()
-    return inspect_file(state.parquet_file, limit=5)
+    with _analytics_query_slot():
+        return inspect_file(state.parquet_file, limit=5)
 
 @app.get("/api/insights")
 def insights(delimiter: Optional[str] = None):
     state = _require_dataset()
     delim = delimiter or state.delimiter
-    summary = get_executive_summary_metrics(state.parquet_file)
-    entry_exit = get_entry_exit_analytics(state.parquet_file, delimiter=delim, top_n=5)
+    with _analytics_query_slot():
+        summary = get_executive_summary_metrics(state.parquet_file)
+        entry_exit = get_entry_exit_analytics(
+            state.parquet_file, delimiter=delim, top_n=5
+        )
     return {
         "summary": summary,
         "entry_points": entry_exit["entry_points"].to_dict(orient="records"),
@@ -505,24 +537,26 @@ def insights(delimiter: Optional[str] = None):
 @app.get("/api/events")
 def events(top: int = Query(20, ge=1, le=200), dedupe: str = "consecutive"):
     state = _require_dataset()
-    df = get_event_frequencies(
-        state.parquet_file,
-        delimiter=state.delimiter,
-        top_n=top,
-        dedupe_mode=_validate_dedupe_mode(dedupe),
-    )
+    with _analytics_query_slot():
+        df = get_event_frequencies(
+            state.parquet_file,
+            delimiter=state.delimiter,
+            top_n=top,
+            dedupe_mode=_validate_dedupe_mode(dedupe),
+        )
     return df.to_dict(orient="records")
 
 @app.get("/api/heatmap")
 def heatmap(top: int = Query(8, ge=1, le=50), dedupe: str = "consecutive"):
     state = _require_dataset()
     try:
-        matrix = get_transition_matrix(
-            state.parquet_file,
-            delimiter=state.delimiter,
-            top_n=top,
-            dedupe_mode=_validate_dedupe_mode(dedupe),
-        )
+        with _analytics_query_slot():
+            matrix = get_transition_matrix(
+                state.parquet_file,
+                delimiter=state.delimiter,
+                top_n=top,
+                dedupe_mode=_validate_dedupe_mode(dedupe),
+            )
     except duckdb.OutOfMemoryException as exc:
         raise HTTPException(
             status_code=503,
@@ -546,13 +580,14 @@ def funnel(steps: str, dedupe: str = "consecutive", sequential: bool = True):
         raise HTTPException(status_code=400, detail="No steps provided")
     if len(step_list) > MAX_FUNNEL_STEPS:
         raise HTTPException(status_code=422, detail="Too many funnel steps")
-    df = calculate_funnel(
-        state.parquet_file,
-        step_list,
-        delimiter=state.delimiter,
-        sequential=sequential,
-        dedupe_mode=_validate_dedupe_mode(dedupe),
-    )
+    with _analytics_query_slot():
+        df = calculate_funnel(
+            state.parquet_file,
+            step_list,
+            delimiter=state.delimiter,
+            sequential=sequential,
+            dedupe_mode=_validate_dedupe_mode(dedupe),
+        )
     return df.to_dict(orient="records")
 
 @app.get("/api/search")
@@ -563,14 +598,15 @@ def search(
     limit: int = Query(20, ge=1, le=500),
 ):
     state = _require_dataset()
-    df = search_sessions(
-        state.parquet_file,
-        contains_event=event,
-        exact_subpath=subpath,
-        min_events=min_events,
-        limit=limit,
-        delimiter=state.delimiter,
-    )
+    with _analytics_query_slot():
+        df = search_sessions(
+            state.parquet_file,
+            contains_event=event,
+            exact_subpath=subpath,
+            min_events=min_events,
+            limit=limit,
+            delimiter=state.delimiter,
+        )
     return df.to_dict(orient="records")
 
 @app.post("/api/query")
@@ -583,16 +619,19 @@ def query(payload: dict):
     if not isinstance(sql, str) or len(sql) > MAX_SQL_CHARS:
         raise HTTPException(status_code=422, detail="SQL query is too large")
     try:
-        df = run_custom_query(
-            state.parquet_file,
-            sql,
-            max_rows=MAX_QUERY_ROWS,
-            timeout_seconds=QUERY_TIMEOUT_SECONDS,
-        )
+        with _analytics_query_slot():
+            df = run_custom_query(
+                state.parquet_file,
+                sql,
+                max_rows=MAX_QUERY_ROWS,
+                timeout_seconds=QUERY_TIMEOUT_SECONDS,
+            )
         return {
             "columns": df.columns.tolist(),
             "records": df.to_dict(orient="records")
         }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -625,13 +664,18 @@ def _run_query_job(job: QueryJob, parquet_file: str, sql: str) -> None:
                 connection.interrupt()
 
     try:
-        df = run_custom_query(
-            parquet_file,
-            sql,
-            max_rows=MAX_QUERY_ROWS,
-            timeout_seconds=QUERY_TIMEOUT_SECONDS,
-            connection_callback=register_connection,
-        )
+        with _analytics_query_slot():
+            with QUERY_JOBS_LOCK:
+                if job.status == "cancelling":
+                    job.status = "cancelled"
+                    return
+            df = run_custom_query(
+                parquet_file,
+                sql,
+                max_rows=MAX_QUERY_ROWS,
+                timeout_seconds=QUERY_TIMEOUT_SECONDS,
+                connection_callback=register_connection,
+            )
         with QUERY_JOBS_LOCK:
             if job.status == "cancelling":
                 job.status = "cancelled"
@@ -1218,6 +1262,7 @@ trishula-web --host 127.0.0.1 --port 8000</code></pre>
                     <li><strong>Incorrect funnel counts:</strong> verify delimiter detection and selected dedupe mode.</li>
                     <li><strong>Empty transition matrix:</strong> wait for calculation to finish, then check the displayed status. Sessions containing only one event legitimately have no transitions.</li>
                     <li><strong>Out of memory:</strong> lower <code>TRISHULA_DUCKDB_MEMORY_LIMIT</code> and confirm sufficient temporary disk space.</li>
+                    <li><strong>Slow analytics:</strong> tabs load on demand and heavy queries are serialized by default. Benchmark before increasing <code>TRISHULA_MAX_CONCURRENT_ANALYTICS</code>.</li>
                     <li><strong>Upload rejected:</strong> check file extension, configured upload limit, and CSV/Parquet validity.</li>
                     <li><strong>Trusted feature returns 403:</strong> restart with <code>TRISHULA_TRUSTED_LOCAL_MODE=true</code> only on a trusted workstation.</li>
                 </ul>
@@ -1229,6 +1274,9 @@ trishula-web --host 127.0.0.1 --port 8000</code></pre>
         let stateData = null;
         let selectedFunnelSteps = [];
         let allTopEventsList = [];
+        let activeTab = 'overview';
+        const loadedTabs = new Set();
+        const tabLoadPromises = new Map();
 
         function escapeHtml(value) {
             const node = document.createElement('span');
@@ -1272,10 +1320,12 @@ trishula-web --host 127.0.0.1 --port 8000</code></pre>
                     document.getElementById('activeFileName').innerText = stateData.parquet_file;
                     document.getElementById('activeFileSize').innerText = `(${stateData.file_size_mb} MB)`;
                     loadStorageStatus();
-                    loadAllData();
+                    resetTabLoads();
+                    loadTabData(activeTab);
                 } else {
                     document.getElementById('loaderCard').style.display = 'block';
                     document.getElementById('datasetBanner').style.display = 'none';
+                    resetTabLoads();
                 }
             } catch (err) {
                 console.error(err);
@@ -1296,6 +1346,7 @@ trishula-web --host 127.0.0.1 --port 8000</code></pre>
             if (response.ok) {
                 stateData = {loaded: false};
                 selectedFunnelSteps = [];
+                resetTabLoads();
                 await fetchState();
             }
         }
@@ -1342,23 +1393,54 @@ trishula-web --host 127.0.0.1 --port 8000</code></pre>
             document.querySelectorAll('.nav-btn').forEach(btn => btn.classList.remove('active'));
             document.querySelectorAll('.tab-panel').forEach(panel => panel.classList.remove('active'));
 
-            if (event && event.target) {
-                event.target.classList.add('active');
-            }
+            const tabButton = document.querySelector(`[data-tab="${tabName}"]`);
+            if (tabButton) tabButton.classList.add('active');
             document.getElementById(`panel-${tabName}`).classList.add('active');
+            activeTab = tabName;
+            loadTabData(tabName);
         }
 
         function onDedupeChange() {
             if (stateData && stateData.loaded) {
-                loadAllData();
+                loadedTabs.delete('funnel');
+                loadedTabs.delete('heatmap');
+                if (activeTab === 'funnel' || activeTab === 'heatmap') {
+                    loadTabData(activeTab, true);
+                }
             }
         }
 
-        function loadAllData() {
-            loadInsights();
-            loadEvents();
-            loadHeatmap();
-            runSearch();
+        function resetTabLoads() {
+            loadedTabs.clear();
+            tabLoadPromises.clear();
+        }
+
+        function loadTabData(tabName, force = false) {
+            if (!stateData || !stateData.loaded || tabName === 'help') return Promise.resolve();
+            if (!force && loadedTabs.has(tabName)) return Promise.resolve();
+            if (tabLoadPromises.has(tabName)) {
+                const currentRequest = tabLoadPromises.get(tabName);
+                return force
+                    ? currentRequest.then(() => loadTabData(tabName, true))
+                    : currentRequest;
+            }
+
+            const loaders = {
+                overview: loadInsights,
+                funnel: loadEvents,
+                heatmap: loadHeatmap,
+                search: runSearch
+            };
+            const loader = loaders[tabName];
+            if (!loader) return Promise.resolve();
+
+            const request = Promise.resolve()
+                .then(loader)
+                .then(() => loadedTabs.add(tabName))
+                .catch(err => console.error(`Unable to load ${tabName} tab`, err))
+                .finally(() => tabLoadPromises.delete(tabName));
+            tabLoadPromises.set(tabName, request);
+            return request;
         }
 
         async function loadInsights() {
@@ -1430,7 +1512,7 @@ trishula-web --host 127.0.0.1 --port 8000</code></pre>
             });
 
             renderFunnelPills();
-            loadFunnel();
+            await loadFunnel();
         }
 
         function renderFunnelPills() {
