@@ -1,10 +1,14 @@
 # 🔱 TRISHULA
 ### Trident Engine for Large-Scale Session & Funnel Analytics
 
-**TRISHULA** is a high-performance Python engine designed to stream, convert, parse, sanitize, and analyze multi-gigabyte Snowflake CSV exports (7.2GB+) using **DuckDB** and **Polars** with zero memory overflow.
+**TRISHULA** is a local Python application for converting, sanitizing, and
+analyzing Snowflake session-path CSV exports with **DuckDB** and Parquet.
+Conversion is out-of-core; result tables and web responses are bounded but
+still consume memory. Use the included benchmark command to validate capacity
+on the workstation that will run the analysis.
 
 Named after the divine trident (**Trishula**), representing three unified pillars of analytical power:
-1. **Out-of-Core Parquet Conversion**: Fast streaming disk conversion with zero RAM overflow.
+1. **Out-of-Core Parquet Conversion**: Streaming disk conversion with a configurable DuckDB memory ceiling.
 2. **Transition Matrix Heatmaps**: Visualizing flow intensity and event-to-event navigation pairs.
 3. **Funnel Retention & Drop-off Intelligence**: Pinpointing friction bottlenecks, conversion drop-offs, and session penetration.
 
@@ -12,8 +16,8 @@ Named after the divine trident (**Trishula**), representing three unified pillar
 
 ## ✨ Key Capabilities
 
-- ⚡ **Out-of-Core Streaming Architecture**: Process multi-gigabyte files (50M+ rows) without loading full datasets into RAM.
-- 🗜️ **Fast Parquet Storage**: Converts raw CSV exports into compressed ZSTD `.parquet` files, achieving **80%+ space savings** and **100x query speedups**.
+- ⚡ **Out-of-Core Conversion**: Convert files larger than available memory, subject to local disk space and DuckDB configuration.
+- 🗜️ **Parquet Storage**: Converts raw CSV exports into compressed ZSTD `.parquet` files. Compression and query performance depend on the dataset and hardware.
 - 🧹 **Automatic Event Sanitization & Deduplication**:
   - `consecutive` (*Default*): Collapses repeated adjacent events (`A -> A -> A` $\rightarrow$ `A`) to eliminate noisy loop pings while preserving true state transitions.
   - `unique`: Deduplicates event paths to retain unique events per session.
@@ -25,10 +29,10 @@ Named after the divine trident (**Trishula**), representing three unified pillar
   - Top Session Entry (starting) and Exit (drop-off) points.
 - 🔥 **Transition Matrix Heatmaps**:
   - Color-coded terminal heatmaps.
-  - Exportable **high-resolution interactive Chart.js HTML Dashboards** with single-click print/PDF capabilities.
+  - Exportable, self-contained HTML dashboards with print/PDF support.
 - 📉 **Funnel Retention & Drop-off Intelligence**:
   - Auto-detected top N event reach & penetration analysis.
-  - Custom multi-step sequential conversion funnel matching using ultra-fast C++ `list_position` array indexing.
+  - Ordered multi-step funnel matching, including repeated steps.
 - ⚡ **Instant Interruption (`Ctrl+C`)**: Built-in signal handling for instant cancellation without lingering C++ background locks.
 
 ---
@@ -40,8 +44,25 @@ Named after the divine trident (**Trishula**), representing three unified pillar
 git clone https://github.com/JHLindstrom/snowflake_csv_analyzer.git
 cd snowflake_csv_analyzer
 
-# Install dependencies (DuckDB, Polars, Rich, Pandas, PyArrow)
+# Install dependencies (DuckDB, Rich, Pandas, PyArrow, FastAPI)
 pip install -r requirements.txt
+```
+
+For stable command-line entry points, install the project itself:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install .
+trishula --help
+trishula-web --help
+```
+
+For development and tests:
+
+```bash
+pip install -e ".[test]"
+pytest -q
 ```
 
 ---
@@ -62,12 +83,34 @@ python3 cli.py run-all /path/to/your_snowflake_data.csv \
   --top 15
 ```
 
+## 🌐 Local Web UI
+
+```bash
+trishula web
+# Open http://127.0.0.1:8000
+```
+
+The supported web workflow is:
+
+1. Upload a `.csv`, `.parquet`, or `.pq` dataset.
+2. Confirm its managed size and available disk space.
+3. Review KPIs, construct an ordered funnel, inspect the transition matrix, or
+   search exact event tokens and contiguous subpaths.
+4. Print or export the current dashboard.
+5. Select **Unload Dataset** when finished. This deletes browser-managed upload
+   files but never deletes a server-local source file.
+
+The **Help & How-to** tab in the UI contains the required schema, dedupe and
+funnel semantics, common commands, storage behavior, and troubleshooting steps.
+The README remains the authoritative reference for installation, configuration,
+security, and the complete CLI.
+
 ---
 
 ## 🛠️ CLI Command Reference
 
 ### 1. 🚀 `run-all` (Automated 1-Step Pipeline)
-Runs the end-to-end analysis pipeline and exports an interactive HTML dashboard.
+Runs the end-to-end analysis pipeline and exports a self-contained HTML dashboard.
 ```bash
 python3 cli.py run-all data.csv [-o output.parquet] [-d delimiter] [-f funnel_steps] [-u dedupe_mode] [--html report.html]
 ```
@@ -79,7 +122,7 @@ python3 cli.py insights output.parquet --delimiter "->"
 ```
 
 ### 3. 🔥 `heatmap` (Transition Matrix & HTML Dashboard)
-Renders a 2D color-coded transition matrix in the terminal and exports an interactive HTML report.
+Renders a 2D color-coded transition matrix in the terminal and exports a self-contained HTML report.
 ```bash
 python3 cli.py heatmap output.parquet --top 8 --html dashboard.html
 ```
@@ -126,11 +169,80 @@ Generates synthetic Snowflake CSV test datasets for benchmarking without exposin
 python3 cli.py generate-mock mock_snowflake.csv --rows 25000
 ```
 
+### 11. 📏 `benchmark` (Repeatable Local Capacity Test)
+
+Generates synthetic sessions and reports conversion throughput, compression,
+analysis time, peak process RSS, and disk consumption.
+
+```bash
+trishula benchmark --rows 1000000 --output-dir ./benchmark-output
+```
+
+Start with a small smoke run, then increase row counts until they represent the
+largest expected local export. Benchmark on the same disk and memory
+configuration used for real analysis.
+
 ---
 
 ## 🔒 Security & Data Privacy
 
-This tool operates **100% locally on your machine**. No data, metrics, or telemetry are ever transmitted externally. All testing and development are conducted using locally generated synthetic mock data.
+Dataset processing is performed locally and the application does not include
+telemetry. The live dashboard and generated HTML reports use self-contained
+assets and do not require public font or charting CDNs.
+
+The supported deployment is a single-user localhost process bound to
+`127.0.0.1`. Custom SQL, native file browsing, loading server-local paths, and
+process restart are disabled unless `TRISHULA_TRUSTED_LOCAL_MODE=true` is set.
+Enable that mode only on a trusted workstation; it deliberately exposes
+powerful local capabilities.
+
+Optional web configuration:
+
+```bash
+export TRISHULA_ALLOWED_DATA_DIR=/absolute/path/to/datasets
+export TRISHULA_MAX_UPLOAD_BYTES=10737418240  # 10 GiB
+export TRISHULA_DUCKDB_MEMORY_LIMIT=1GB
+export TRISHULA_QUERY_TIMEOUT_SECONDS=30
+export TRISHULA_MAX_QUERY_ROWS=10000
+export TRISHULA_QUERY_JOB_TTL_SECONDS=3600
+export TRISHULA_SESSION_TTL_SECONDS=86400
+export TRISHULA_SESSION_DB=/absolute/path/to/sessions.sqlite3
+export TRISHULA_TRUSTED_LOCAL_MODE=true       # only when explicitly needed
+python3 cli.py web
+```
+
+Uploads are streamed to generated filenames under `uploads/`; client-provided
+paths are never used as destination paths. Each browser receives an isolated
+dataset session through an HttpOnly, same-site cookie. Expired sessions and
+their managed upload files are removed automatically.
+
+The dashboard reports free disk space and managed dataset size. “Unload
+Dataset” clears the active session and deletes files created by browser upload;
+server-local source files are never deleted by that control.
+
+Trusted-local custom SQL can be submitted through `/api/query/start`, monitored
+through `/api/query/{job_id}`, and cancelled through
+`/api/query/{job_id}/cancel`. Completed job metadata expires automatically.
+
+Network binding is an advanced, unsupported deployment mode. It is disabled
+unless `TRISHULA_ACCESS_TOKEN`,
+`TRISHULA_ALLOW_NETWORK=true`, and `TRISHULA_COOKIE_SECURE=true` are all set.
+Use a long random token and terminate TLS at a trusted reverse proxy.
+
+```bash
+export TRISHULA_ACCESS_TOKEN="$(openssl rand -hex 32)"
+export TRISHULA_ALLOW_NETWORK=true
+export TRISHULA_COOKIE_SECURE=true
+python3 cli.py web --host 0.0.0.0
+```
+
+## 🧪 Tests
+
+```bash
+pip install pytest
+pytest -q
+python3 test_analyzer.py
+```
 
 ---
 

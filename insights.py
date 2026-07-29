@@ -8,6 +8,15 @@ if os.path.exists(user_site) and user_site not in sys.path:
 import duckdb
 import pandas as pd
 from typing import Dict, Any
+from event_parser import sanitize_event_path_sql
+
+
+def _connect() -> duckdb.DuckDBPyConnection:
+    con = duckdb.connect(database=":memory:")
+    memory_limit = os.getenv("TRISHULA_DUCKDB_MEMORY_LIMIT", "1GB").replace("'", "''")
+    con.execute(f"SET memory_limit = '{memory_limit}'")
+    return con
+
 
 def _get_read_sql(file_path: str) -> str:
     clean_path = file_path.replace("'", "''")
@@ -19,7 +28,7 @@ def get_entry_exit_analytics(file_path: str, delimiter: str = "->", top_n: int =
     """
     Analyzes entry events (first event) and exit events (last event) in user sessions directly in DuckDB SQL.
     """
-    con = duckdb.connect(database=":memory:")
+    con = _connect()
     read_sql = _get_read_sql(file_path)
     clean_delim = delimiter.replace("'", "''")
     
@@ -71,7 +80,7 @@ def get_executive_summary_metrics(file_path: str) -> Dict[str, Any]:
     """
     Computes key executive metrics: total sessions, bounce rate, average events per session, and percentiles.
     """
-    con = duckdb.connect(database=":memory:")
+    con = _connect()
     read_sql = _get_read_sql(file_path)
     
     query = f"""
@@ -103,18 +112,28 @@ def get_executive_summary_metrics(file_path: str) -> Dict[str, Any]:
         "max_events": row[6]
     }
 
-def get_transition_matrix(file_path: str, delimiter: str = "->", top_n: int = 8) -> pd.DataFrame:
+def get_transition_matrix(
+    file_path: str,
+    delimiter: str = "->",
+    top_n: int = 8,
+    dedupe_mode: str = "none",
+) -> pd.DataFrame:
     """
     Generates a 2D Transition Matrix (Source Event x Target Event) for heatmaps.
     """
-    con = duckdb.connect(database=":memory:")
+    con = _connect()
     read_sql = _get_read_sql(file_path)
     clean_delim = delimiter.replace("'", "''")
+    path_expr = "EVENT_PATH"
+    if dedupe_mode != "none":
+        path_expr = sanitize_event_path_sql(
+            "EVENT_PATH", delimiter=delimiter, mode=dedupe_mode
+        )
     
     # 1. Find top N events
     top_events_sql = f"""
     WITH unnested AS (
-        SELECT unnest(string_split(EVENT_PATH, '{clean_delim}')) AS event_name
+        SELECT unnest(string_split({path_expr}, '{clean_delim}')) AS event_name
         FROM {read_sql}
     )
     SELECT trim(event_name) FROM unnested WHERE trim(event_name) != ''
@@ -125,7 +144,7 @@ def get_transition_matrix(file_path: str, delimiter: str = "->", top_n: int = 8)
     # 2. Get transition counts between top events
     pairs_sql = f"""
     WITH split_events AS (
-        SELECT string_split(EVENT_PATH, '{clean_delim}') AS events
+        SELECT string_split({path_expr}, '{clean_delim}') AS events
         FROM {read_sql}
         WHERE EVENT_PATH IS NOT NULL
     ),
