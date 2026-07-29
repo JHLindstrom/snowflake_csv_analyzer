@@ -281,6 +281,18 @@ def index():
             box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
         }
 
+        .info-box {
+            background: rgba(56, 189, 248, 0.08);
+            border-left: 4px solid var(--accent-cyan);
+            padding: 16px 20px;
+            border-radius: 0 12px 12px 0;
+            margin-bottom: 24px;
+            font-size: 14px;
+            line-height: 1.6;
+            color: #cbd5e1;
+        }
+        .info-box strong { color: var(--accent-cyan); }
+
         .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 20px; margin-bottom: 28px; }
         .kpi-card {
             background: rgba(30, 41, 59, 0.5);
@@ -333,6 +345,32 @@ def index():
             align-items: center;
             gap: 8px;
         }
+
+        .chip-btn {
+            background: rgba(129, 140, 248, 0.15);
+            color: #a5b4fc;
+            border: 1px solid rgba(129, 140, 248, 0.3);
+            padding: 6px 12px;
+            border-radius: 16px;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .chip-btn:hover { background: rgba(129, 140, 248, 0.3); color: #fff; }
+
+        .breadcrumb-pill {
+            background: rgba(15, 23, 42, 0.8);
+            border: 1px solid var(--card-border);
+            padding: 4px 10px;
+            border-radius: 6px;
+            font-size: 12px;
+            font-family: 'JetBrains Mono', monospace;
+            color: #e2e8f0;
+            display: inline-flex;
+            align-items: center;
+        }
+        .breadcrumb-arrow { color: #38bdf8; margin: 0 6px; font-weight: bold; }
 
         table { width: 100%; border-collapse: collapse; margin-top: 16px; font-size: 14px; }
         th, td { padding: 14px 18px; text-align: left; border-bottom: 1px solid var(--card-border); }
@@ -394,12 +432,9 @@ def index():
             <p style="color: #94a3b8; margin: 0 0 24px 0;">Open your macOS Finder file dialog or choose a CSV/Parquet export:</p>
             
             <div style="display: flex; gap: 12px; max-width: 700px; margin: 0 auto; justify-content: center; flex-wrap: wrap;">
-                <!-- Button 1: macOS Native Finder Window Chooser -->
                 <button class="btn-action" onclick="triggerNativeFinder()" style="padding: 12px 24px; font-size: 15px;">
                     📂 Open Finder Window...
                 </button>
-                
-                <!-- Button 2: Browser File Selector -->
                 <button class="btn-secondary" onclick="document.getElementById('browserFileInput').click()" style="padding: 12px 24px; font-size: 15px;">
                     📤 Upload CSV/Parquet
                 </button>
@@ -477,30 +512,49 @@ def index():
 
         <!-- Tab 2: Funnel Retention Builder -->
         <div id="panel-funnel" class="tab-panel">
-            <div class="glass-card">
-                <h3 style="color: #38bdf8;">Funnel Retention & Conversion Builder</h3>
-                <p style="color: #94a3b8; font-size: 14px;">Construct and evaluate step-by-step conversion flows:</p>
-                
-                <div id="funnelPills" style="display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px;"></div>
+            <!-- Explanatory Box -->
+            <div class="info-box">
+                💡 <strong>How Funnel Retention Analysis Works:</strong><br/>
+                A <strong>Funnel</strong> measures how many user sessions complete an ordered sequence of user steps (e.g. <code>Home → Product_View → Checkout</code>). 
+                The analysis tracks session progression step-by-step and calculates drop-off rates between consecutive stages. 
+                Use the 1-click presets or choose steps from your dataset below to build your funnel!
+            </div>
 
-                <div style="display: flex; gap: 12px;">
+            <div class="glass-card">
+                <h3 style="color: #38bdf8; margin-top: 0;">🎛️ Funnel Retention & Conversion Flow</h3>
+                
+                <!-- Quick Preset Flow Buttons -->
+                <div style="margin-bottom: 20px;">
+                    <span style="font-size: 13px; color: #94a3b8; font-weight: bold; margin-right: 10px;">QUICK PRESETS:</span>
+                    <button class="chip-btn" onclick="applyFunnelPreset('top')">⚡ Top 4 Frequent Events</button>
+                    <button class="chip-btn" onclick="applyFunnelPreset('checkout')" style="margin-left: 6px;">🛒 E-Commerce Checkout Flow</button>
+                    <button class="chip-btn" onclick="applyFunnelPreset('search')" style="margin-left: 6px;">🔍 Search Discovery Flow</button>
+                    <button class="chip-btn" onclick="clearFunnel()" style="margin-left: 6px; background: rgba(251, 113, 133, 0.15); color: #fb7185; border-color: rgba(251, 113, 133, 0.3);">🗑️ Clear All</button>
+                </div>
+
+                <!-- Funnel Step Tiles -->
+                <div id="funnelPills" style="display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; min-height: 42px; padding: 12px; background: rgba(15, 23, 42, 0.5); border-radius: 12px; border: 1px dashed var(--card-border);"></div>
+
+                <!-- Add Step Selector -->
+                <div style="display: flex; gap: 12px; align-items: center;">
                     <select id="addEventSelect" onchange="addStepToFunnel(this.value)">
-                        <option value="">+ Add Event Step to Funnel</option>
+                        <option value="">+ Select Event Step to Add...</option>
                     </select>
+                    <span style="font-size: 13px; color: #64748b;">(Steps are evaluated in chronological order)</span>
                 </div>
             </div>
 
             <div class="glass-card">
-                <h3>Step Conversion Metrics</h3>
+                <h3>Step Conversion & Retention Breakdown</h3>
                 <table id="funnelMetricsTable">
                     <thead>
                         <tr>
-                            <th>#</th>
-                            <th>Step Name</th>
-                            <th>Sessions</th>
-                            <th>Step Conversion</th>
-                            <th>Step Drop-Off</th>
-                            <th style="width: 30%;">Retention Bar</th>
+                            <th>Step #</th>
+                            <th>Event Step Name</th>
+                            <th>Qualifying Sessions</th>
+                            <th>Step Conversion %</th>
+                            <th>Step Drop-Off %</th>
+                            <th style="width: 35%;">Retention Bar</th>
                         </tr>
                     </thead>
                     <tbody></tbody>
@@ -525,11 +579,24 @@ def index():
 
         <!-- Tab 4: Session Explorer -->
         <div id="panel-search" class="tab-panel">
+            <!-- Explanatory Box -->
+            <div class="info-box">
+                🔍 <strong>How the Session Explorer Works:</strong><br/>
+                The <strong>Session Explorer</strong> allows you to inspect actual user navigation journeys. You can search for sessions containing specific event actions or filter by exact subpath sequences (e.g. <code>Search → Home</code>). Click any pre-populated quick filter below to explore sessions instantly!
+            </div>
+
             <div class="glass-card">
-                <h3 style="color: #38bdf8;">Session Search & Explorer</h3>
+                <h3 style="color: #38bdf8; margin-top: 0;">🔎 Session Search & Journey Inspector</h3>
+                
+                <!-- Pre-populated Quick Filter Chips -->
+                <div style="margin-bottom: 20px;">
+                    <span style="font-size: 13px; color: #94a3b8; font-weight: bold; margin-right: 10px;">PRE-POPULATED QUICK FILTERS:</span>
+                    <div id="quickSearchChips" style="display: inline-flex; flex-wrap: wrap; gap: 8px; margin-top: 8px;"></div>
+                </div>
+
                 <div style="display: flex; gap: 16px; margin: 20px 0;">
-                    <input id="searchEventInput" placeholder="Filter by event name (e.g. VehicleView)" style="flex: 1;" />
-                    <input id="searchSubpathInput" placeholder="Filter by exact subpath (e.g. Search->Home)" style="flex: 1;" />
+                    <input id="searchEventInput" placeholder="Filter by event name (e.g. VehicleView or Search)" style="flex: 1;" />
+                    <input id="searchSubpathInput" placeholder="Filter by subpath sequence (e.g. Search->Home)" style="flex: 1;" />
                     <button class="btn-action" onclick="runSearch()">🔎 Search Sessions</button>
                 </div>
 
@@ -537,7 +604,7 @@ def index():
                     <thead>
                         <tr>
                             <th>Session ID</th>
-                            <th>Event Navigation Path</th>
+                            <th>User Event Navigation Journey (Breadcrumbs)</th>
                             <th>Total Events</th>
                         </tr>
                     </thead>
@@ -550,6 +617,7 @@ def index():
     <script>
         let stateData = null;
         let selectedFunnelSteps = [];
+        let allTopEventsList = [];
 
         window.addEventListener('DOMContentLoaded', () => {
             fetchState();
@@ -662,6 +730,7 @@ def index():
             loadInsights();
             loadEvents();
             loadHeatmap();
+            runSearch();
         }
 
         async function loadInsights() {
@@ -700,25 +769,63 @@ def index():
             const res = await fetch(`/api/events?dedupe=${dedupe}`);
             const data = await res.json();
 
+            allTopEventsList = data;
+
+            // Pre-populate Add Event Dropdown
             const select = document.getElementById('addEventSelect');
-            select.innerHTML = '<option value="">+ Add Event Step to Funnel</option>' + 
+            select.innerHTML = '<option value="">+ Select Event Step to Add...</option>' + 
                 data.map(e => `<option value="${e.event_name}">${e.event_name} (${e.occurrence_count.toLocaleString()} occurrences)</option>`).join('');
 
+            // Auto-populate Funnel if empty
             if (selectedFunnelSteps.length === 0 && data.length > 0) {
-                selectedFunnelSteps = data.slice(0, 5).map(e => e.event_name);
+                selectedFunnelSteps = data.slice(0, 4).map(e => e.event_name);
             }
+
+            // Populate Session Explorer Quick Filters
+            const chipsDiv = document.getElementById('quickSearchChips');
+            chipsDiv.innerHTML = data.slice(0, 6).map(e => `
+                <button class="chip-btn" onclick="applySearchFilter('${e.event_name}', '')">Event: ${e.event_name}</button>
+            `).join('');
+
             renderFunnelPills();
             loadFunnel();
         }
 
         function renderFunnelPills() {
             const container = document.getElementById('funnelPills');
+            if (selectedFunnelSteps.length === 0) {
+                container.innerHTML = `<span style="color: #64748b; font-size: 13px;">No funnel steps selected. Click a preset above or add a step!</span>`;
+                return;
+            }
             container.innerHTML = selectedFunnelSteps.map((step, idx) => `
-                <span class="tag-pill" style="padding: 8px 16px; font-size: 14px;">
-                    #${idx+1} ${step}
+                <span class="tag-pill" style="padding: 8px 16px; font-size: 14px; background: rgba(56, 189, 248, 0.15);">
+                    <strong>#${idx+1}</strong> ${step}
                     <span style="cursor: pointer; margin-left: 8px; font-weight: bold; color: #fb7185" onclick="removeStepFromFunnel(${idx})">✕</span>
                 </span>
             `).join('');
+        }
+
+        function applyFunnelPreset(presetType) {
+            if (presetType === 'top') {
+                selectedFunnelSteps = allTopEventsList.slice(0, 4).map(e => e.event_name);
+            } else if (presetType === 'checkout') {
+                const checkoutCandidates = ['Home', 'Search', 'Product_View', 'Add_To_Cart', 'Checkout', 'Payment', 'Order_Confirmation'];
+                selectedFunnelSteps = checkoutCandidates.filter(c => allTopEventsList.some(e => e.event_name === c));
+                if (selectedFunnelSteps.length === 0) selectedFunnelSteps = allTopEventsList.slice(0, 4).map(e => e.event_name);
+            } else if (presetType === 'search') {
+                const searchCandidates = ['Search', 'Product_View', 'Category_Browse', 'Add_To_Cart'];
+                selectedFunnelSteps = searchCandidates.filter(c => allTopEventsList.some(e => e.event_name === c));
+                if (selectedFunnelSteps.length === 0) selectedFunnelSteps = allTopEventsList.slice(0, 3).map(e => e.event_name);
+            }
+            renderFunnelPills();
+            loadFunnel();
+        }
+
+        function clearFunnel() {
+            selectedFunnelSteps = [];
+            renderFunnelPills();
+            const tbody = document.querySelector('#funnelMetricsTable tbody');
+            tbody.innerHTML = `<tr><td colspan="6" style="text-align: center; color: #64748b;">Add at least one step to compute funnel metrics.</td></tr>`;
         }
 
         function addStepToFunnel(stepName) {
@@ -727,12 +834,14 @@ def index():
                 renderFunnelPills();
                 loadFunnel();
             }
+            document.getElementById('addEventSelect').value = "";
         }
 
         function removeStepFromFunnel(idx) {
             selectedFunnelSteps.splice(idx, 1);
             renderFunnelPills();
-            loadFunnel();
+            if (selectedFunnelSteps.length > 0) loadFunnel();
+            else clearFunnel();
         }
 
         async function loadFunnel() {
@@ -745,9 +854,9 @@ def index():
             const tbody = document.querySelector('#funnelMetricsTable tbody');
             tbody.innerHTML = data.map(r => `
                 <tr>
-                    <td><strong>${r.step_number}</strong></td>
+                    <td><strong>#${r.step_number}</strong></td>
                     <td><strong style="color: #38bdf8">${r.step_name}</strong></td>
-                    <td>${r.session_count.toLocaleString()}</td>
+                    <td><strong>${r.session_count.toLocaleString()}</strong></td>
                     <td><span class="tag-pill" style="color: #34d399">${r.step_conversion_pct}%</span></td>
                     <td><span class="tag-pill" style="color: #fb7185; border-color: rgba(251,113,133,0.3)">${r.step_dropoff_pct}%</span></td>
                     <td>
@@ -780,6 +889,12 @@ def index():
             `).join('');
         }
 
+        function applySearchFilter(eventVal, subpathVal) {
+            document.getElementById('searchEventInput').value = eventVal;
+            document.getElementById('searchSubpathInput').value = subpathVal;
+            runSearch();
+        }
+
         async function runSearch() {
             const ev = document.getElementById('searchEventInput').value.trim();
             const sub = document.getElementById('searchSubpathInput').value.trim();
@@ -791,13 +906,25 @@ def index():
             const data = await res.json();
 
             const tbody = document.querySelector('#searchTable tbody');
-            tbody.innerHTML = data.map(s => `
-                <tr>
-                    <td><strong style="color: #38bdf8; font-family: monospace;">${s.SESSION}</strong></td>
-                    <td style="font-family: monospace; font-size: 13px;">${s.EVENT_PATH}</td>
-                    <td><span class="tag-pill">${s.TOTAL_EVENTS}</span></td>
-                </tr>
-            `).join('');
+            if (!data || data.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="3" style="text-align: center; color: #64748b;">No matching sessions found.</td></tr>`;
+                return;
+            }
+
+            tbody.innerHTML = data.map(s => {
+                const steps = s.EVENT_PATH.split('->');
+                const breadcrumbs = steps.map((st, i) => `
+                    <span class="breadcrumb-pill">${st}</span>
+                `).join('<span class="breadcrumb-arrow">➔</span>');
+
+                return `
+                    <tr>
+                        <td><strong style="color: #38bdf8; font-family: monospace; font-size: 13px;">${s.SESSION}</strong></td>
+                        <td>${breadcrumbs}</td>
+                        <td><span class="tag-pill">${s.TOTAL_EVENTS} events</span></td>
+                    </tr>
+                `;
+            }).join('');
         }
     </script>
 </body>
