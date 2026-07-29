@@ -105,6 +105,11 @@ funnel semantics, common commands, storage behavior, and troubleshooting steps.
 The README remains the authoritative reference for installation, configuration,
 security, and the complete CLI.
 
+The transition matrix reports whether it is calculating, empty, or unable to
+load. A matrix with events but no populated cells means the selected sessions
+contain no transitions between the displayed events; for example, every path
+contains only one event.
+
 ---
 
 ## 🛠️ CLI Command Reference

@@ -1,9 +1,4 @@
-import sys
 import os
-
-user_site = os.path.expanduser("~/Library/Python/3.9/lib/python/site-packages")
-if os.path.exists(user_site) and user_site not in sys.path:
-    sys.path.insert(0, user_site)
 
 import pandas as pd
 import html

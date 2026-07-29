@@ -18,10 +18,6 @@ import duckdb
 import pandas as pd
 from typing import Any, Optional, List
 
-user_site = os.path.expanduser("~/Library/Python/3.9/lib/python/site-packages")
-if os.path.exists(user_site) and user_site not in sys.path:
-    sys.path.insert(0, user_site)
-
 from fastapi import FastAPI, HTTPException, Query, Request, UploadFile, File
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -520,12 +516,22 @@ def events(top: int = Query(20, ge=1, le=200), dedupe: str = "consecutive"):
 @app.get("/api/heatmap")
 def heatmap(top: int = Query(8, ge=1, le=50), dedupe: str = "consecutive"):
     state = _require_dataset()
-    matrix = get_transition_matrix(
-        state.parquet_file,
-        delimiter=state.delimiter,
-        top_n=top,
-        dedupe_mode=_validate_dedupe_mode(dedupe),
-    )
+    try:
+        matrix = get_transition_matrix(
+            state.parquet_file,
+            delimiter=state.delimiter,
+            top_n=top,
+            dedupe_mode=_validate_dedupe_mode(dedupe),
+        )
+    except duckdb.OutOfMemoryException as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Transition calculation exceeded the configured DuckDB memory "
+                "limit. Try a smaller dataset or increase "
+                "TRISHULA_DUCKDB_MEMORY_LIMIT."
+            ),
+        ) from exc
     return {
         "columns": matrix.columns.tolist(),
         "index": matrix.index.tolist(),
@@ -1088,9 +1094,12 @@ def index(request: Request):
             <div class="glass-card">
                 <h3 style="color: #fb7185;">Event Transition Heatmap Matrix</h3>
                 <p style="color: #94a3b8; font-size: 14px;">Source x Target event-to-event flow intensity matrix:</p>
+                <div id="heatmapStatus" role="status" aria-live="polite" style="color: #94a3b8; margin-top: 16px;">
+                    Load a dataset to calculate transitions.
+                </div>
                 
                 <div style="overflow-x: auto;">
-                    <table id="heatmapTable" style="margin-top: 20px;">
+                    <table id="heatmapTable" style="margin-top: 20px; display: none;">
                         <thead></thead>
                         <tbody></tbody>
                     </table>
@@ -1145,7 +1154,7 @@ def index(request: Request):
             <div class="glass-card">
                 <h2>Quick start</h2>
                 <ol>
-                    <li>Select a CSV or Parquet file with <strong>Choose Browser File</strong>.</li>
+                    <li>Select a CSV or Parquet file with <strong>Upload CSV/Parquet</strong>.</li>
                     <li>Confirm the active filename, managed size, and free disk space.</li>
                     <li>Review Executive KPIs, then build an ordered funnel or inspect transitions.</li>
                     <li>Use Session Explorer for exact event-token and contiguous-subpath searches.</li>
@@ -1207,6 +1216,7 @@ trishula-web --host 127.0.0.1 --port 8000</code></pre>
                 <ul>
                     <li><strong>Missing columns:</strong> export or rename fields to the required uppercase schema.</li>
                     <li><strong>Incorrect funnel counts:</strong> verify delimiter detection and selected dedupe mode.</li>
+                    <li><strong>Empty transition matrix:</strong> wait for calculation to finish, then check the displayed status. Sessions containing only one event legitimately have no transitions.</li>
                     <li><strong>Out of memory:</strong> lower <code>TRISHULA_DUCKDB_MEMORY_LIMIT</code> and confirm sufficient temporary disk space.</li>
                     <li><strong>Upload rejected:</strong> check file extension, configured upload limit, and CSV/Parquet validity.</li>
                     <li><strong>Trusted feature returns 403:</strong> restart with <code>TRISHULA_TRUSTED_LOCAL_MODE=true</code> only on a trusted workstation.</li>
@@ -1505,23 +1515,50 @@ trishula-web --host 127.0.0.1 --port 8000</code></pre>
 
         async function loadHeatmap() {
             const dedupe = document.getElementById('dedupeSelect').value;
-            const res = await fetch(`/api/heatmap?dedupe=${dedupe}`);
-            const data = await res.json();
-
+            const table = document.getElementById('heatmapTable');
+            const status = document.getElementById('heatmapStatus');
             const thead = document.querySelector('#heatmapTable thead');
-            thead.innerHTML = `<tr><th>From / To</th>${data.columns.map(c => `<th>${escapeHtml(c)}</th>`).join('')}</tr>`;
-
-            const maxVal = Math.max(...data.data.flat());
             const tbody = document.querySelector('#heatmapTable tbody');
-            tbody.innerHTML = data.index.map((rowLabel, rIdx) => `
-                <tr>
-                    <td><strong style="color: #38bdf8">${escapeHtml(rowLabel)}</strong></td>
-                    ${data.data[rIdx].map(val => {
-                        const bg = val > 0 ? `rgba(56, 189, 248, ${Math.max(0.15, val / maxVal)})` : 'rgba(30, 41, 59, 0.4)';
-                        return `<td style="background: ${bg}; text-align: center; font-weight: bold;">${val > 0 ? val.toLocaleString() : '-'}</td>`;
-                    }).join('')}
-                </tr>
-            `).join('');
+            status.style.color = '#94a3b8';
+            status.textContent = 'Calculating transition matrix…';
+            status.style.display = 'block';
+            table.style.display = 'none';
+            thead.innerHTML = '';
+            tbody.innerHTML = '';
+
+            try {
+                const res = await fetch(`/api/heatmap?dedupe=${dedupe}`);
+                const contentType = res.headers.get('content-type') || '';
+                const data = contentType.includes('application/json')
+                    ? await res.json()
+                    : {detail: await res.text()};
+                if (!res.ok) throw new Error(data.detail || 'Transition calculation failed');
+                if (!data.columns?.length || !data.index?.length || !data.data?.length) {
+                    status.textContent = 'No events are available for a transition matrix.';
+                    return;
+                }
+
+                const values = data.data.flat();
+                const maxVal = Math.max(0, ...values);
+                thead.innerHTML = `<tr><th>From / To</th>${data.columns.map(c => `<th>${escapeHtml(c)}</th>`).join('')}</tr>`;
+                tbody.innerHTML = data.index.map((rowLabel, rIdx) => `
+                    <tr>
+                        <td><strong style="color: #38bdf8">${escapeHtml(rowLabel)}</strong></td>
+                        ${data.data[rIdx].map(val => {
+                            const intensity = maxVal > 0 ? val / maxVal : 0;
+                            const bg = val > 0 ? `rgba(56, 189, 248, ${Math.max(0.15, intensity)})` : 'rgba(30, 41, 59, 0.4)';
+                            return `<td style="background: ${bg}; text-align: center; font-weight: bold;">${val > 0 ? val.toLocaleString() : '-'}</td>`;
+                        }).join('')}
+                    </tr>
+                `).join('');
+                table.style.display = 'table';
+                status.textContent = maxVal > 0
+                    ? `Showing transitions among the ${data.columns.length} most frequent events.`
+                    : 'Events were found, but there are no transitions between them.';
+            } catch (err) {
+                status.style.color = '#fb7185';
+                status.textContent = `Unable to load transition matrix: ${err.message}`;
+            }
         }
 
         function applySearchFilter(eventVal, subpathVal) {

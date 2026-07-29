@@ -21,6 +21,7 @@ from event_parser import (
 )
 from visualizer import export_html_report
 from benchmark import run_benchmark
+from insights import get_transition_matrix
 
 
 @pytest.fixture()
@@ -68,6 +69,41 @@ def test_transition_counts_are_exact_and_dedupe_sensitive(event_dataset):
     assert raw_counts["A -> A"] == 1
     assert "A -> A" not in deduped_counts
     assert deduped_counts["A -> B"] == 3
+
+
+def test_transition_matrix_is_exact_and_dedupe_sensitive(event_dataset):
+    raw = get_transition_matrix(
+        str(event_dataset), top_n=3, dedupe_mode="none"
+    )
+    deduped = get_transition_matrix(
+        str(event_dataset), top_n=3, dedupe_mode="consecutive"
+    )
+
+    assert raw.loc["A", "A"] == 1
+    assert raw.loc["A", "B"] == 3
+    assert raw.loc["B", "A"] == 2
+    assert deduped.loc["A", "A"] == 0
+    assert deduped.loc["A", "B"] == 3
+    assert deduped.loc["B", "A"] == 2
+
+
+def test_heatmap_reports_duckdb_memory_limit_as_json_error(event_dataset, monkeypatch):
+    monkeypatch.setattr(
+        server,
+        "_require_dataset",
+        lambda: server.DatasetState(parquet_file=str(event_dataset)),
+    )
+
+    def exhaust_memory(*args, **kwargs):
+        raise duckdb.OutOfMemoryException("test memory limit")
+
+    monkeypatch.setattr(server, "get_transition_matrix", exhaust_memory)
+
+    with pytest.raises(HTTPException) as exc:
+        server.heatmap()
+
+    assert exc.value.status_code == 503
+    assert "TRISHULA_DUCKDB_MEMORY_LIMIT" in exc.value.detail
 
 
 def test_event_search_matches_tokens_not_substrings(event_dataset):
@@ -175,6 +211,8 @@ def test_browser_upload_is_the_only_dataset_loading_workflow():
     request.state.csp_nonce = "test-nonce"
     html = server.index(request)
     assert "Upload CSV/Parquet" in html
+    assert "heatmapStatus" in html
+    assert "Calculating transition matrix" in html
     assert "Open Finder Window" not in html
     assert "ENTER LOCAL FILE PATH" not in html
     assert "Load Synthetic Sample" not in html
