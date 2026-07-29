@@ -2,6 +2,8 @@ import sys
 import os
 import argparse
 import subprocess
+import threading
+import time
 import duckdb
 import pandas as pd
 from typing import Optional, List
@@ -66,6 +68,16 @@ def init_active_file(file_path: str, delimiter: str = "->"):
         ACTIVE_PARQUET = file_path
         
     ACTIVE_DELIMITER = detect_delimiter(ACTIVE_PARQUET) if delimiter == "->" else delimiter
+
+@app.post("/api/restart")
+def restart_server():
+    """Triggers an in-place process restart of the Python web server."""
+    def _restart():
+        time.sleep(0.5)
+        os.execv(sys.executable, [sys.executable] + sys.argv)
+
+    threading.Thread(target=_restart, daemon=True).start()
+    return {"success": True, "message": "Server process restarting..."}
 
 @app.get("/api/browse-file")
 def browse_file():
@@ -421,6 +433,9 @@ def index():
                 <option value="unique">Dedupe: Unique</option>
                 <option value="none">Dedupe: None (Raw)</option>
             </select>
+            <button class="nav-btn" onclick="triggerServerRestart()" style="color: #fb7185; border-color: rgba(251, 113, 133, 0.3);">
+                🔄 Restart Server
+            </button>
             <button class="btn-action" onclick="window.print()">🖨️ Export PDF</button>
         </div>
     </div>
@@ -640,6 +655,17 @@ def index():
             } catch (err) {
                 console.error(err);
             }
+        }
+
+        async function triggerServerRestart() {
+            if (!confirm("Are you sure you want to restart the Trishula Web Server process?")) return;
+            try {
+                await fetch('/api/restart', { method: 'POST' });
+            } catch(e) {}
+            alert("🔄 Trishula Web Server is restarting... Reloading page!");
+            setTimeout(() => {
+                window.location.reload();
+            }, 1500);
         }
 
         async function triggerNativeFinder() {
