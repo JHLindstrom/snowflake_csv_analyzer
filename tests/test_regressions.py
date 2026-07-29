@@ -87,6 +87,25 @@ def test_transition_matrix_is_exact_and_dedupe_sensitive(event_dataset):
     assert deduped.loc["B", "A"] == 2
 
 
+def test_heatmap_reports_duckdb_memory_limit_as_json_error(event_dataset, monkeypatch):
+    monkeypatch.setattr(
+        server,
+        "_require_dataset",
+        lambda: server.DatasetState(parquet_file=str(event_dataset)),
+    )
+
+    def exhaust_memory(*args, **kwargs):
+        raise duckdb.OutOfMemoryException("test memory limit")
+
+    monkeypatch.setattr(server, "get_transition_matrix", exhaust_memory)
+
+    with pytest.raises(HTTPException) as exc:
+        server.heatmap()
+
+    assert exc.value.status_code == 503
+    assert "TRISHULA_DUCKDB_MEMORY_LIMIT" in exc.value.detail
+
+
 def test_event_search_matches_tokens_not_substrings(event_dataset):
     exact = search_sessions(str(event_dataset), contains_event="A")
     substring = search_sessions(str(event_dataset), contains_event="A->B")

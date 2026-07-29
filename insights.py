@@ -121,49 +121,58 @@ def get_transition_matrix(
     con = _connect()
     read_sql = _get_read_sql(file_path)
     clean_delim = delimiter.replace("'", "''")
-    mode_filter = {
-        "none": "TRUE",
-        "consecutive": "event_index = 1 OR event_name IS DISTINCT FROM previous_event",
-        "unique": "event_occurrence = 1",
+    filtered_events_expr = {
+        "none": "events",
+        "consecutive": """
+            list_filter(
+                list_transform(
+                    generate_series(1, len(events)),
+                    event_index -> CASE
+                        WHEN event_index = 1
+                          OR events[event_index] IS DISTINCT FROM events[event_index - 1]
+                        THEN events[event_index]
+                        ELSE NULL
+                    END
+                ),
+                event_name -> event_name IS NOT NULL
+            )
+        """,
+        "unique": """
+            list_transform(
+                list_filter(
+                    generate_series(1, len(events)),
+                    event_index -> list_position(events, events[event_index]) = event_index
+                ),
+                event_index -> events[event_index]
+            )
+        """,
     }[dedupe_mode]
 
-    # Split each path once, then use window functions for deduplication and
-    # adjacency. Expanding sanitize_event_path_sql inside a per-event lambda
-    # caused near-quadratic work on long paths.
+    # Materialize each split path once, deduplicate within its list, and derive
+    # adjacent pairs by index. This avoids both the previous near-quadratic
+    # repeated splitting and memory-heavy window sorts over every event.
     query = f"""
-    WITH paths AS (
+    WITH paths AS MATERIALIZED (
         SELECT
             row_number() OVER () AS path_id,
-            list_transform(
-                string_split(EVENT_PATH, '{clean_delim}'),
-                event_name -> trim(event_name)
+            list_filter(
+                list_transform(
+                    string_split(EVENT_PATH, '{clean_delim}'),
+                    event_name -> trim(event_name)
+                ),
+                event_name -> event_name != ''
             ) AS events
         FROM {read_sql}
         WHERE EVENT_PATH IS NOT NULL
     ),
-    expanded AS (
-        SELECT
-            path_id,
-            event_index,
-            event_name,
-            lag(event_name) OVER (
-                PARTITION BY path_id ORDER BY event_index
-            ) AS previous_event,
-            row_number() OVER (
-                PARTITION BY path_id, event_name ORDER BY event_index
-            ) AS event_occurrence
-        FROM paths,
-             unnest(events) WITH ORDINALITY AS event(event_name, event_index)
-        WHERE event_name != ''
-    ),
-    filtered AS (
-        SELECT path_id, event_index, event_name
-        FROM expanded
-        WHERE {mode_filter}
+    filtered_paths AS MATERIALIZED (
+        SELECT path_id, {filtered_events_expr} AS events
+        FROM paths
     ),
     event_counts AS (
         SELECT event_name, count(*) AS event_count
-        FROM filtered
+        FROM filtered_paths,
+             unnest(events) AS event(event_name)
         GROUP BY event_name
     ),
     top_events AS (
@@ -176,20 +185,16 @@ def get_transition_matrix(
         ORDER BY event_count DESC, event_name
         LIMIT {top_n}
     ),
-    sequenced AS (
+    pairs AS (
         SELECT
-            path_id,
-            event_index,
-            event_name AS source_event,
-            lead(event_name) OVER (
-                PARTITION BY path_id ORDER BY event_index
-            ) AS target_event
-        FROM filtered
+            events[event_index] AS source_event,
+            events[event_index + 1] AS target_event
+        FROM filtered_paths,
+             generate_series(1, len(events) - 1) AS position(event_index)
     ),
     transition_counts AS (
         SELECT source_event, target_event, count(*) AS transition_count
-        FROM sequenced
-        WHERE target_event IS NOT NULL
+        FROM pairs
         GROUP BY source_event, target_event
     )
     SELECT

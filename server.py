@@ -516,12 +516,22 @@ def events(top: int = Query(20, ge=1, le=200), dedupe: str = "consecutive"):
 @app.get("/api/heatmap")
 def heatmap(top: int = Query(8, ge=1, le=50), dedupe: str = "consecutive"):
     state = _require_dataset()
-    matrix = get_transition_matrix(
-        state.parquet_file,
-        delimiter=state.delimiter,
-        top_n=top,
-        dedupe_mode=_validate_dedupe_mode(dedupe),
-    )
+    try:
+        matrix = get_transition_matrix(
+            state.parquet_file,
+            delimiter=state.delimiter,
+            top_n=top,
+            dedupe_mode=_validate_dedupe_mode(dedupe),
+        )
+    except duckdb.OutOfMemoryException as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Transition calculation exceeded the configured DuckDB memory "
+                "limit. Try a smaller dataset or increase "
+                "TRISHULA_DUCKDB_MEMORY_LIMIT."
+            ),
+        ) from exc
     return {
         "columns": matrix.columns.tolist(),
         "index": matrix.index.tolist(),
@@ -1518,7 +1528,10 @@ trishula-web --host 127.0.0.1 --port 8000</code></pre>
 
             try {
                 const res = await fetch(`/api/heatmap?dedupe=${dedupe}`);
-                const data = await res.json();
+                const contentType = res.headers.get('content-type') || '';
+                const data = contentType.includes('application/json')
+                    ? await res.json()
+                    : {detail: await res.text()};
                 if (!res.ok) throw new Error(data.detail || 'Transition calculation failed');
                 if (!data.columns?.length || !data.index?.length || !data.data?.length) {
                     status.textContent = 'No events are available for a transition matrix.';
