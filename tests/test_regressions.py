@@ -490,6 +490,24 @@ def test_dashboard_compacts_and_expands_session_journeys():
     assert "Consecutive repeated events are grouped." in dashboard
 
 
+def test_dashboard_exports_only_the_selected_tab():
+    request = Request({"type": "http", "method": "GET", "path": "/", "headers": []})
+    request.state.csp_nonce = "test-nonce"
+    dashboard = server.index(request)
+
+    assert "Export Selected Tab to PDF" in dashboard
+    assert "Selected tab only" in dashboard
+    assert "exportSelectedTabToPdf" in dashboard
+    assert "await loadTabData(activeTab)" in dashboard
+    assert "Preparing selected tab…" in dashboard
+    assert "tab-panel.active" in dashboard
+    assert "landscapeTabs.has(activeTab)" in dashboard
+    assert "previousExpandedRows" in dashboard
+    assert "window.addEventListener('afterprint', restoreUi, {once: true})" in dashboard
+    assert "@media print" in dashboard
+    assert "thead { display: table-header-group; }" in dashboard
+
+
 def test_readme_has_no_removed_architecture_or_unverified_performance_claims():
     readme = Path("README.md").read_text(encoding="utf-8")
     stale_claims = ["Chart.js", "React", "zero memory overflow", "100x query"]

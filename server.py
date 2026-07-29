@@ -1049,6 +1049,137 @@ def index(request: Request):
         }
         .tab-panel { display: none; }
         .tab-panel.active { display: block; }
+        .print-report-header { display: none; }
+
+        @media print {
+            :root {
+                --bg-dark: #ffffff;
+                --card-bg: #ffffff;
+                --card-border: #cbd5e1;
+                --text-main: #0f172a;
+                --text-muted: #475569;
+            }
+            * {
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
+            }
+            body {
+                background: #ffffff;
+                background-image: none;
+                color: #0f172a;
+                font-size: 10pt;
+            }
+            .navbar,
+            #loaderCard,
+            #datasetBanner,
+            .info-box,
+            #sessionControls,
+            .journey-toggle,
+            #panel-search .chip-btn,
+            #panel-search input,
+            #panel-search #searchButton,
+            #panel-funnel .chip-btn,
+            #panel-funnel select,
+            #panel-funnel #calculateFunnelButton {
+                display: none !important;
+            }
+            .container {
+                margin: 0;
+                max-width: none;
+                padding: 0;
+            }
+            .print-report-header {
+                border-bottom: 2px solid #0284c7;
+                display: block;
+                margin-bottom: 8mm;
+                padding-bottom: 4mm;
+            }
+            .print-report-header h1 {
+                color: #0f172a;
+                font-size: 20pt;
+                margin: 0 0 2mm;
+            }
+            .print-report-meta {
+                color: #475569;
+                display: grid;
+                font-size: 9pt;
+                gap: 1mm 8mm;
+                grid-template-columns: auto 1fr;
+            }
+            .tab-panel,
+            .tab-panel.active {
+                display: none !important;
+            }
+            .tab-panel.active {
+                display: block !important;
+            }
+            .glass-card {
+                background: #ffffff;
+                border: 1px solid #cbd5e1;
+                border-radius: 4px;
+                box-shadow: none;
+                margin-bottom: 6mm;
+                padding: 5mm;
+            }
+            .kpi-grid {
+                gap: 4mm;
+                margin-bottom: 6mm;
+            }
+            .kpi-card {
+                background: #f8fafc;
+                border: 1px solid #cbd5e1;
+                break-inside: avoid;
+                padding: 4mm;
+            }
+            .kpi-val { color: #0369a1; font-size: 20pt; }
+            h2, h3 { break-after: avoid; color: #0f172a !important; }
+            table {
+                border-collapse: collapse;
+                font-size: 8.5pt;
+                margin-top: 3mm;
+            }
+            thead { display: table-header-group; }
+            tfoot { display: table-footer-group; }
+            tr { break-inside: avoid; }
+            th, td {
+                border-bottom: 1px solid #cbd5e1;
+                color: #0f172a;
+                padding: 2.5mm 3mm;
+            }
+            th {
+                background: #e2e8f0;
+                color: #334155;
+            }
+            .tag-pill,
+            .breadcrumb-pill {
+                background: #f8fafc;
+                border-color: #94a3b8;
+                color: #0f172a;
+            }
+            .breadcrumb-pill.match {
+                background: #fef3c7;
+                border-color: #d97706;
+                color: #78350f;
+            }
+            .breadcrumb-arrow { color: #0369a1; }
+            .journey-cell.expanded .journey-flow {
+                background: transparent;
+                border: 0;
+                max-height: none;
+                overflow: visible;
+                padding: 0;
+            }
+            #heatmapTable {
+                font-size: 6.5pt;
+                table-layout: fixed;
+            }
+            #heatmapTable th,
+            #heatmapTable td {
+                overflow-wrap: anywhere;
+                padding: 1.5mm;
+            }
+            a { color: #0369a1; text-decoration: none; }
+        }
     </style>
 </head>
 <body>
@@ -1072,11 +1203,20 @@ def index(request: Request):
             <button class="nav-btn" id="restartButton" style="color: #fb7185; border-color: rgba(251, 113, 133, 0.3);">
                 🔄 Restart Server
             </button>
-            <button class="btn-action" id="printButton">🖨️ Export PDF</button>
+            <button class="btn-action" id="printButton" title="Exports only the currently selected analysis tab">🖨️ Export Selected Tab to PDF</button>
         </div>
     </div>
 
     <div class="container">
+        <header class="print-report-header" aria-hidden="true">
+            <h1 id="printReportTitle">Trishula Analysis</h1>
+            <div class="print-report-meta">
+                <strong>Scope</strong><span>Selected tab only</span>
+                <strong>Dataset</strong><span id="printReportDataset">-</span>
+                <strong>Dedupe</strong><span id="printReportDedupe">-</span>
+                <strong>Exported</strong><span id="printReportTimestamp">-</span>
+            </div>
+        </header>
         <!-- Dataset Loader Card -->
         <div id="loaderCard" class="glass-card" style="border: 2px solid rgba(56, 189, 248, 0.4); background: rgba(15, 23, 42, 0.95); padding: 36px; text-align: center;">
             <h2 style="margin: 0 0 8px 0;">Select Dataset File</h2>
@@ -1280,7 +1420,7 @@ def index(request: Request):
                     <li>Confirm the active filename, managed size, and free disk space.</li>
                     <li>Review Executive KPIs, then build an ordered funnel or inspect transitions.</li>
                     <li>Use Session Explorer for exact event-token and contiguous-subpath searches.</li>
-                    <li>Export with <strong>Export PDF</strong>, or unload the dataset when finished.</li>
+                    <li>Export only the visible analysis with <strong>Export Selected Tab to PDF</strong>, or unload the dataset when finished.</li>
                 </ol>
             </div>
 
@@ -1373,7 +1513,7 @@ trishula-web --host 127.0.0.1 --port 8000</code></pre>
             document.getElementById('openFileButton').addEventListener('click', openFileModal);
             document.getElementById('dedupeSelect').addEventListener('change', onDedupeChange);
             document.getElementById('restartButton').addEventListener('click', triggerServerRestart);
-            document.getElementById('printButton').addEventListener('click', () => window.print());
+            document.getElementById('printButton').addEventListener('click', exportSelectedTabToPdf);
             document.getElementById('browserFileButton').addEventListener(
                 'click', () => document.getElementById('browserFileInput').click()
             );
@@ -1448,6 +1588,59 @@ trishula-web --host 127.0.0.1 --port 8000</code></pre>
             setTimeout(() => {
                 window.location.reload();
             }, 1500);
+        }
+
+        async function exportSelectedTabToPdf() {
+            const printButton = document.getElementById('printButton');
+            const originalButtonText = printButton.textContent;
+            printButton.disabled = true;
+            printButton.textContent = 'Preparing selected tab…';
+            await loadTabData(activeTab);
+
+            const tabTitles = {
+                overview: 'Executive KPIs',
+                funnel: 'Funnel Retention',
+                heatmap: 'Transition Matrix',
+                search: 'Session Explorer',
+                help: 'Help & How-to'
+            };
+            const landscapeTabs = new Set(['heatmap', 'search']);
+            const previousExpandedRows = new Set(expandedSessionRows);
+            if (activeTab === 'search' && expandedSessionRows.size > 0) {
+                expandedSessionRows.clear();
+                renderSessionResults();
+            }
+
+            document.getElementById('printReportTitle').textContent =
+                `Trishula - ${tabTitles[activeTab] || 'Analysis'}`;
+            document.getElementById('printReportDataset').textContent =
+                stateData?.parquet_file || 'No active dataset';
+            document.getElementById('printReportDedupe').textContent =
+                document.getElementById('dedupeSelect').selectedOptions[0]?.textContent || '-';
+            document.getElementById('printReportTimestamp').textContent =
+                new Date().toLocaleString();
+
+            const pageStyle = document.createElement('style');
+            pageStyle.id = 'dynamicPrintPageStyle';
+            pageStyle.textContent = landscapeTabs.has(activeTab)
+                ? '@page { size: A4 landscape; margin: 12mm; }'
+                : '@page { size: A4 portrait; margin: 14mm; }';
+            document.head.appendChild(pageStyle);
+            document.body.classList.add('printing-selected-tab');
+
+            const restoreUi = () => {
+                document.body.classList.remove('printing-selected-tab');
+                pageStyle.remove();
+                printButton.disabled = false;
+                printButton.textContent = originalButtonText;
+                if (activeTab === 'search' && previousExpandedRows.size > 0) {
+                    expandedSessionRows.clear();
+                    previousExpandedRows.forEach(index => expandedSessionRows.add(index));
+                    renderSessionResults();
+                }
+            };
+            window.addEventListener('afterprint', restoreUi, {once: true});
+            requestAnimationFrame(() => window.print());
         }
 
         async function handleBrowserFileUpload(files) {
