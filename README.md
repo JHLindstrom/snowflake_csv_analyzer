@@ -206,6 +206,7 @@ Optional web configuration:
 ```bash
 export TRISHULA_MAX_UPLOAD_BYTES=10737418240  # 10 GiB
 export TRISHULA_DUCKDB_MEMORY_LIMIT=1GB
+export TRISHULA_DUCKDB_THREADS=4
 export TRISHULA_MAX_CONCURRENT_ANALYTICS=1
 export TRISHULA_ANALYTICS_QUEUE_TIMEOUT_SECONDS=30
 export TRISHULA_QUERY_TIMEOUT_SECONDS=30
@@ -229,6 +230,13 @@ the DuckDB memory limit applies per connection. Increase concurrency only after
 benchmarking the largest expected export on the target workstation. Requests
 that cannot enter the gate within `TRISHULA_ANALYTICS_QUEUE_TIMEOUT_SECONDS`
 return HTTP 503 instead of waiting indefinitely.
+
+Every DuckDB connection uses `TRISHULA_DUCKDB_THREADS=4` by default. Lower it
+to reduce CPU pressure and keep the workstation responsive, or raise it only
+after benchmarking representative exports. Valid values are integers from 1
+through 64. `TRISHULA_DUCKDB_MEMORY_LIMIT` accepts sizes such as `512MB`, `1GB`,
+or `4GB`; invalid resource settings fail with a clear configuration error.
+The active limits are shown in the dataset banner.
 
 The dashboard reports free disk space and managed dataset size. “Unload
 Dataset” clears the active session and deletes files created by browser upload.
