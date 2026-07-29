@@ -206,6 +206,8 @@ Optional web configuration:
 ```bash
 export TRISHULA_MAX_UPLOAD_BYTES=10737418240  # 10 GiB
 export TRISHULA_DUCKDB_MEMORY_LIMIT=1GB
+export TRISHULA_MAX_CONCURRENT_ANALYTICS=1
+export TRISHULA_ANALYTICS_QUEUE_TIMEOUT_SECONDS=30
 export TRISHULA_QUERY_TIMEOUT_SECONDS=30
 export TRISHULA_MAX_QUERY_ROWS=10000
 export TRISHULA_QUERY_JOB_TTL_SECONDS=3600
@@ -219,6 +221,14 @@ Uploads are streamed to generated filenames under `uploads/`; client-provided
 paths are never used as destination paths. Each browser receives an isolated
 dataset session through an HttpOnly, same-site cookie. Expired sessions and
 their managed upload files are removed automatically.
+
+The dashboard loads analytics on demand when a tab is first opened instead of
+starting every query after upload. DuckDB-heavy API operations share a bounded
+query gate; `TRISHULA_MAX_CONCURRENT_ANALYTICS=1` is the safe default because
+the DuckDB memory limit applies per connection. Increase concurrency only after
+benchmarking the largest expected export on the target workstation. Requests
+that cannot enter the gate within `TRISHULA_ANALYTICS_QUEUE_TIMEOUT_SECONDS`
+return HTTP 503 instead of waiting indefinitely.
 
 The dashboard reports free disk space and managed dataset size. “Unload
 Dataset” clears the active session and deletes files created by browser upload.
@@ -242,8 +252,8 @@ python3 cli.py web --host 0.0.0.0
 ## 🧪 Tests
 
 ```bash
-pip install pytest
-pytest -q
+python3 -m pip install -e ".[test]"
+python3 -m pytest -q
 python3 test_analyzer.py
 ```
 

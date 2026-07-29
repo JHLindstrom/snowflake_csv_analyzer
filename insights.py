@@ -43,8 +43,6 @@ def get_entry_exit_analytics(file_path: str, delimiter: str = "->", top_n: int =
     ORDER BY entry_count DESC
     LIMIT {top_n};
     """
-    entry_df = con.execute(entry_sql).fetchdf()
-
     # 2. Exit Events (Top N)
     exit_sql = f"""
     WITH split_events AS (
@@ -62,9 +60,11 @@ def get_entry_exit_analytics(file_path: str, delimiter: str = "->", top_n: int =
     ORDER BY exit_count DESC
     LIMIT {top_n};
     """
-    exit_df = con.execute(exit_sql).fetchdf()
-    
-    con.close()
+    try:
+        entry_df = con.execute(entry_sql).fetchdf()
+        exit_df = con.execute(exit_sql).fetchdf()
+    finally:
+        con.close()
     return {
         "entry_points": entry_df,
         "exit_points": exit_df
@@ -88,8 +88,10 @@ def get_executive_summary_metrics(file_path: str) -> Dict[str, Any]:
         MAX(TOTAL_EVENTS) AS max_events
     FROM {read_sql};
     """
-    row = con.execute(query).fetchone()
-    con.close()
+    try:
+        row = con.execute(query).fetchone()
+    finally:
+        con.close()
     
     total_sessions = row[0]
     bounces = row[1]

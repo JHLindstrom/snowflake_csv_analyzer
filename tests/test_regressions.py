@@ -2,6 +2,8 @@ import asyncio
 import csv
 import io
 import re
+import threading
+import time
 from pathlib import Path
 
 import duckdb
@@ -161,6 +163,42 @@ def test_queued_background_query_can_be_cancelled_before_execution(event_dataset
     assert job.result is None
 
 
+def test_background_query_cancelled_while_waiting_does_not_execute(
+    event_dataset, monkeypatch
+):
+    semaphore = threading.BoundedSemaphore(1)
+    semaphore.acquire()
+    monkeypatch.setattr(server, "ANALYTICS_QUERY_SLOTS", semaphore)
+    monkeypatch.setattr(server, "ANALYTICS_QUEUE_TIMEOUT_SECONDS", 1)
+    executed = threading.Event()
+    monkeypatch.setattr(
+        server,
+        "run_custom_query",
+        lambda *args, **kwargs: executed.set(),
+    )
+    job = server.QueryJob(
+        job_id="job-waiting",
+        session_id=None,
+        created_at=time.time(),
+    )
+    worker = threading.Thread(
+        target=server._run_query_job,
+        args=(job, str(event_dataset), "SELECT * FROM data"),
+    )
+    worker.start()
+
+    deadline = time.time() + 1
+    while job.status != "running" and time.time() < deadline:
+        time.sleep(0.01)
+    job.status = "cancelling"
+    semaphore.release()
+    worker.join(timeout=1)
+
+    assert not worker.is_alive()
+    assert job.status == "cancelled"
+    assert not executed.is_set()
+
+
 def test_schema_validation_rejects_missing_required_columns(tmp_path):
     dataset = tmp_path / "invalid.csv"
     dataset.write_text("SESSION,EVENT_PATH\none,A\n", encoding="utf-8")
@@ -216,6 +254,65 @@ def test_browser_upload_is_the_only_dataset_loading_workflow():
     assert "Open Finder Window" not in html
     assert "ENTER LOCAL FILE PATH" not in html
     assert "Load Synthetic Sample" not in html
+
+
+def test_dashboard_loads_only_the_active_tab_on_startup():
+    request = Request({"type": "http", "method": "GET", "path": "/", "headers": []})
+    request.state.csp_nonce = "test-nonce"
+
+    dashboard = server.index(request)
+
+    assert "loadAllData" not in dashboard
+    assert "loadTabData(activeTab)" in dashboard
+    assert "if (tabLoadPromises.has(tabName))" in dashboard
+    assert "loadedTabs.delete('heatmap')" in dashboard
+
+
+def test_analytics_query_slot_serializes_concurrent_work(monkeypatch):
+    monkeypatch.setattr(server, "ANALYTICS_QUERY_SLOTS", threading.BoundedSemaphore(1))
+    monkeypatch.setattr(server, "ANALYTICS_QUEUE_TIMEOUT_SECONDS", 1)
+    active = 0
+    peak_active = 0
+    state_lock = threading.Lock()
+    first_entered = threading.Event()
+
+    def worker():
+        nonlocal active, peak_active
+        with server._analytics_query_slot():
+            with state_lock:
+                active += 1
+                peak_active = max(peak_active, active)
+                first_entered.set()
+            time.sleep(0.03)
+            with state_lock:
+                active -= 1
+
+    first = threading.Thread(target=worker)
+    second = threading.Thread(target=worker)
+    first.start()
+    assert first_entered.wait(timeout=1)
+    second.start()
+    first.join(timeout=1)
+    second.join(timeout=1)
+
+    assert not first.is_alive()
+    assert not second.is_alive()
+    assert peak_active == 1
+
+
+def test_analytics_query_slot_times_out_when_capacity_is_busy(monkeypatch):
+    semaphore = threading.BoundedSemaphore(1)
+    semaphore.acquire()
+    monkeypatch.setattr(server, "ANALYTICS_QUERY_SLOTS", semaphore)
+    monkeypatch.setattr(server, "ANALYTICS_QUEUE_TIMEOUT_SECONDS", 0.01)
+
+    with pytest.raises(HTTPException) as exc:
+        with server._analytics_query_slot():
+            pass
+
+    semaphore.release()
+    assert exc.value.status_code == 503
+    assert "capacity is busy" in exc.value.detail
 
 
 def test_login_rejects_wrong_token_and_sets_httponly_cookie(monkeypatch):
@@ -397,4 +494,6 @@ def test_benchmark_smoke_reports_resource_metrics():
     assert result["rows"] == 25
     assert result["rows_per_second"] > 0
     assert result["peak_process_rss_mb"] > 0
+    assert result["heatmap_seconds"] >= 0
+    assert result["heatmap_nonzero_cells"] > 0
     assert result["output_directory"] is None
