@@ -6,7 +6,7 @@ if os.path.exists(user_site) and user_site not in sys.path:
     sys.path.insert(0, user_site)
 
 import pandas as pd
-import json
+import html
 from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
@@ -114,12 +114,10 @@ def export_html_report(
     paths_df: pd.DataFrame = None
 ) -> str:
     """
-    Generates a high-resolution, interactive HTML Dashboard report with Chart.js vector charts.
+    Generates a self-contained high-resolution HTML dashboard.
     """
-    # Prepare JSON data for Chart.js
     funnel_labels = funnel_df['step_name'].tolist() if funnel_df is not None and not funnel_df.empty else []
     funnel_counts = funnel_df['session_count'].tolist() if funnel_df is not None and not funnel_df.empty else []
-    funnel_dropoffs = funnel_df['step_dropoff_pct'].tolist() if funnel_df is not None and not funnel_df.empty else []
 
     entry_labels = entry_df['event_name'].tolist() if entry_df is not None else []
     entry_counts = entry_df['entry_count'].tolist() if entry_df is not None else []
@@ -127,13 +125,34 @@ def export_html_report(
     exit_labels = exit_df['event_name'].tolist() if exit_df is not None else []
     exit_counts = exit_df['exit_count'].tolist() if exit_df is not None else []
 
+    def render_bars(labels, counts, color):
+        maximum = max(counts, default=1) or 1
+        rows = []
+        for label, count in zip(labels, counts):
+            width = round((count / maximum) * 100, 2)
+            rows.append(
+                "<div class='bar-row'>"
+                f"<div class='bar-label'>{html.escape(str(label))}</div>"
+                "<div class='bar-track'>"
+                f"<div class='bar-value' style='width:{width}%;background:{color}'></div>"
+                "</div>"
+                f"<strong>{int(count):,}</strong></div>"
+            )
+        return "".join(rows)
+
+    funnel_bars = render_bars(funnel_labels, funnel_counts, "#38bdf8")
+    entry_bars = render_bars(entry_labels, entry_counts, "#22c55e")
+    exit_bars = render_bars(exit_labels, exit_counts, "#ef4444")
+
     # HTML Matrix Table Cells
-    matrix_headers = "".join([f"<th>{col}</th>" for col in matrix.columns])
+    matrix_headers = "".join(
+        [f"<th>{html.escape(str(col))}</th>" for col in matrix.columns]
+    )
     matrix_rows = ""
     max_val = matrix.values.max() if matrix.values.max() > 0 else 1
     
     for src in matrix.index:
-        cells = [f"<td class='row-header'>{src}</td>"]
+        cells = [f"<td class='row-header'>{html.escape(str(src))}</td>"]
         for tgt in matrix.columns:
             val = matrix.loc[src, tgt]
             intensity = round((val / max_val) * 0.85, 2)
@@ -147,7 +166,7 @@ def export_html_report(
             funnel_rows += f"""
             <tr>
                 <td>{r.step_number}</td>
-                <td><strong>{r.step_name}</strong></td>
+                <td><strong>{html.escape(str(r.step_name))}</strong></td>
                 <td>{r.session_count:,}</td>
                 <td style="color: {'#22c55e' if r.step_conversion_pct > 50 else '#ef4444'}; font-weight: bold;">{r.step_conversion_pct}%</td>
                 <td style="color: {'#ef4444' if r.step_dropoff_pct > 50 else '#94a3b8'};">{r.step_dropoff_pct}%</td>
@@ -162,7 +181,7 @@ def export_html_report(
             path_rows += f"""
             <tr>
                 <td>{idx}</td>
-                <td><code style="color: #38bdf8; background: #0f172a; padding: 4px 8px; border-radius: 4px;">{r.full_path}</code></td>
+                <td><code style="color: #38bdf8; background: #0f172a; padding: 4px 8px; border-radius: 4px;">{html.escape(str(r.full_path))}</code></td>
                 <td>{r.TOTAL_EVENTS}</td>
                 <td>{r.session_count:,}</td>
                 <td><strong>{r.share_percent}%</strong></td>
@@ -177,7 +196,6 @@ def export_html_report(
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Trishula Analytics Dashboard</title>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         :root {{ --bg: #0f172a; --card-bg: #1e293b; --text: #f8fafc; --accent: #38bdf8; --border: #334155; }}
         body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background-color: var(--bg); color: var(--text); margin: 0; padding: 40px; line-height: 1.5; }}
@@ -195,7 +213,11 @@ def export_html_report(
         th, td {{ padding: 12px 16px; text-align: left; border-bottom: 1px solid var(--border); }}
         th {{ background-color: #0f172a; color: #94a3b8; font-size: 12px; text-transform: uppercase; }}
         .row-header {{ background-color: #0f172a; font-weight: bold; color: var(--accent); }}
-        .chart-container {{ position: relative; height: 320px; width: 100%; margin-top: 15px; }}
+        .chart-container {{ width: 100%; margin-top: 15px; }}
+        .bar-row {{ display: grid; grid-template-columns: minmax(100px, 1fr) 3fr auto; gap: 12px; align-items: center; margin: 14px 0; }}
+        .bar-label {{ overflow-wrap: anywhere; color: #cbd5e1; }}
+        .bar-track {{ height: 18px; border-radius: 9px; background: #0f172a; overflow: hidden; }}
+        .bar-value {{ height: 100%; min-width: 2px; border-radius: 9px; }}
         @media print {{ body {{ background: #fff; color: #000; padding: 0; }} .section, .metric-card {{ background: #fff; border: 1px solid #ccc; color: #000; }} .btn-print {{ display: none; }} }}
     </style>
 </head>
@@ -205,7 +227,7 @@ def export_html_report(
             <h1>🔱 TRISHULA</h1>
             <p>Trident Session Analytics & High-Resolution Funnel Dashboard</p>
         </div>
-        <button class="btn-print" onclick="window.print()">Print / Export PDF</button>
+        <button class="btn-print" id="printReport">Print / Export PDF</button>
     </div>
 
     <!-- Executive Metrics -->
@@ -238,7 +260,7 @@ def export_html_report(
         <h2>📉 Interactive Funnel Retention & Drop-Off Chart</h2>
         <div class="grid-2">
             <div class="chart-container">
-                <canvas id="funnelChart"></canvas>
+                {funnel_bars}
             </div>
             <div>
                 <table>
@@ -268,13 +290,13 @@ def export_html_report(
             <div>
                 <h3>Top Starting Events (Entry Points)</h3>
                 <div class="chart-container">
-                    <canvas id="entryChart"></canvas>
+                    {entry_bars}
                 </div>
             </div>
             <div>
                 <h3>Top Drop-off Events (Exit Points)</h3>
                 <div class="chart-container">
-                    <canvas id="exitChart"></canvas>
+                    {exit_bars}
                 </div>
             </div>
         </div>
@@ -320,69 +342,7 @@ def export_html_report(
     </div>
     ''' if path_rows else ''}
 
-    <script>
-        // Funnel Chart Rendering
-        const funnelLabels = {json.dumps(funnel_labels)};
-        const funnelCounts = {json.dumps(funnel_counts)};
-        
-        if (funnelLabels.length > 0) {{
-            new Chart(document.getElementById('funnelChart'), {{
-                type: 'bar',
-                data: {{
-                    labels: funnelLabels,
-                    datasets: [{{
-                        label: 'Sessions Reaching Step',
-                        data: funnelCounts,
-                        backgroundColor: '#38bdf8',
-                        borderRadius: 6
-                    }}]
-                }},
-                options: {{
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: {{ legend: {{ display: false }} }},
-                    scales: {{
-                        x: {{ ticks: {{ color: '#94a3b8' }}, grid: {{ color: '#334155' }} }},
-                        y: {{ ticks: {{ color: '#94a3b8' }}, grid: {{ color: '#334155' }} }}
-                    }}
-                }}
-            }});
-        }}
-
-        // Entry Chart
-        new Chart(document.getElementById('entryChart'), {{
-            type: 'doughnut',
-            data: {{
-                labels: {json.dumps(entry_labels)},
-                datasets: [{{
-                    data: {json.dumps(entry_counts)},
-                    backgroundColor: ['#22c55e', '#38bdf8', '#a855f7', '#eab308', '#f97316']
-                }}]
-            }},
-            options: {{
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {{ legend: {{ position: 'bottom', labels: {{ color: '#f8fafc' }} }} }}
-            }}
-        }});
-
-        // Exit Chart
-        new Chart(document.getElementById('exitChart'), {{
-            type: 'doughnut',
-            data: {{
-                labels: {json.dumps(exit_labels)},
-                datasets: [{{
-                    data: {json.dumps(exit_counts)},
-                    backgroundColor: ['#ef4444', '#f97316', '#eab308', '#a855f7', '#64748b']
-                }}]
-            }},
-            options: {{
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {{ legend: {{ position: 'bottom', labels: {{ color: '#f8fafc' }} }} }}
-            }}
-        }});
-    </script>
+    <script>document.getElementById('printReport').addEventListener('click',()=>window.print());</script>
 </body>
 </html>
 """

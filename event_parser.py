@@ -7,7 +7,16 @@ if os.path.exists(user_site) and user_site not in sys.path:
 
 import duckdb
 import pandas as pd
+import threading
 from typing import List, Dict, Any, Optional
+
+
+def _connect() -> duckdb.DuckDBPyConnection:
+    con = duckdb.connect(database=":memory:")
+    memory_limit = os.getenv("TRISHULA_DUCKDB_MEMORY_LIMIT", "1GB").replace("'", "''")
+    con.execute(f"SET memory_limit = '{memory_limit}'")
+    return con
+
 
 def _get_read_sql(file_path: str) -> str:
     clean_path = file_path.replace("'", "''")
@@ -27,7 +36,7 @@ def detect_delimiter(file_path: str) -> str:
     Auto-detects the event path delimiter (->, ,, >, |) from sample rows.
     """
     try:
-        con = duckdb.connect(database=":memory:")
+        con = _connect()
         read_sql = _get_read_sql(file_path)
         sample = con.execute(f"SELECT EVENT_PATH FROM {read_sql} WHERE EVENT_PATH IS NOT NULL AND trim(EVENT_PATH) != '' LIMIT 10").fetchall()
         con.close()
@@ -67,14 +76,21 @@ def sanitize_event_path_sql(column_name: str = "EVENT_PATH", delimiter: str = "-
         """
         return f"array_to_string({dedupe_expr}, '{clean_delim}')"
     elif mode == "unique":
-        return f"array_to_string(list_distinct({split_list}), '{clean_delim}')"
+        # list_distinct does not preserve source order in DuckDB. Retain only
+        # the first indexed occurrence of each event instead.
+        unique_indexes = (
+            f"list_filter(generate_series(1, len({split_list})), "
+            f"i -> list_position({split_list}, {split_list}[i]) = i)"
+        )
+        unique_events = f"list_transform({unique_indexes}, i -> {split_list}[i])"
+        return f"array_to_string({unique_events}, '{clean_delim}')"
     return column_name
 
 def get_event_frequencies(file_path: str, delimiter: str = "->", top_n: int = 20, dedupe_mode: Optional[str] = None) -> pd.DataFrame:
     """
     Unnests EVENT_PATH by delimiter and calculates individual event frequencies.
     """
-    con = duckdb.connect(database=":memory:")
+    con = _connect()
     read_sql = _get_read_sql(file_path)
     clean_delim = delimiter.replace("'", "''")
     path_expr = "EVENT_PATH"
@@ -102,15 +118,21 @@ def get_event_frequencies(file_path: str, delimiter: str = "->", top_n: int = 20
     con.close()
     return df
 
-def get_top_paths(file_path: str, top_n: int = 15, min_events: int = 1, dedupe_mode: Optional[str] = None) -> pd.DataFrame:
+def get_top_paths(
+    file_path: str,
+    top_n: int = 15,
+    min_events: int = 1,
+    dedupe_mode: Optional[str] = None,
+    delimiter: str = "->",
+) -> pd.DataFrame:
     """
     Ranks the most frequent full user navigation paths in high-speed DuckDB SQL.
     """
-    con = duckdb.connect(database=":memory:")
+    con = _connect()
     read_sql = _get_read_sql(file_path)
     path_expr = "EVENT_PATH"
     if dedupe_mode and dedupe_mode != "none":
-        path_expr = sanitize_event_path_sql("EVENT_PATH", mode=dedupe_mode)
+        path_expr = sanitize_event_path_sql("EVENT_PATH", delimiter=delimiter, mode=dedupe_mode)
     
     query = f"""
     SELECT 
@@ -132,7 +154,7 @@ def get_transition_pairs(file_path: str, delimiter: str = "->", top_n: int = 20,
     """
     Calculates step-to-step event transition pairs (e.g. Step A -> Step B).
     """
-    con = duckdb.connect(database=":memory:")
+    con = _connect()
     read_sql = _get_read_sql(file_path)
     clean_delim = delimiter.replace("'", "''")
     path_expr = "EVENT_PATH"
@@ -185,10 +207,9 @@ def calculate_funnel(
     if not steps:
         raise ValueError("Funnel requires at least one step.")
 
-    con = duckdb.connect(database=":memory:")
+    con = _connect()
     read_sql = _get_read_sql(file_path)
-    # Always use fast direct array splitting (list_position gives identical first-occurrence ordering)
-    split_sql = _get_split_sql(file_path, delimiter, dedupe_mode=None)
+    split_sql = _get_split_sql(file_path, delimiter, dedupe_mode=dedupe_mode)
     clean_steps = [s.strip() for s in steps]
     total_steps = len(clean_steps)
     
@@ -212,31 +233,58 @@ def calculate_funnel(
             
         sub_sequence = clean_steps[:idx+1]
         
-        if sequential and len(sub_sequence) > 1:
-            # Sequential mode: Step N must occur after Step N-1
-            conds = []
-            for i in range(len(sub_sequence)):
-                curr_step = sub_sequence[i].replace("'", "''")
-                conds.append(f"list_position(events, '{curr_step}') > 0")
-                if i > 0:
-                    prev_step = sub_sequence[i-1].replace("'", "''")
-                    conds.append(f"list_position(events, '{curr_step}') > list_position(events, '{prev_step}')")
-            where_expr = " AND ".join(conds)
+        if sequential:
+            # Carry the matched position forward so repeated steps such as
+            # A -> B -> A are matched correctly.
+            position_ctes = []
+            previous_cte = "split_events"
+            previous_position = None
+            for position_idx, funnel_step in enumerate(sub_sequence, 1):
+                clean_step = funnel_step.replace("'", "''")
+                cte_name = f"matched_{position_idx}"
+                if previous_position is None:
+                    position_expr = f"list_position(events, '{clean_step}')"
+                else:
+                    relative_position = (
+                        f"list_position(list_slice(events, {previous_position} + 1, len(events)), "
+                        f"'{clean_step}')"
+                    )
+                    position_expr = (
+                        f"CASE WHEN {previous_position} > 0 AND {relative_position} > 0 "
+                        f"THEN {previous_position} + {relative_position} ELSE 0 END"
+                    )
+                position_ctes.append(
+                    f"{cte_name} AS (SELECT *, {position_expr} AS position_{position_idx} "
+                    f"FROM {previous_cte})"
+                )
+                previous_cte = cte_name
+                previous_position = f"position_{position_idx}"
+            matching_sql = ",\n".join(position_ctes)
+            sql = f"""
+            WITH split_events AS (
+                SELECT {split_sql} AS events
+                FROM {read_sql}
+                WHERE EVENT_PATH IS NOT NULL
+            ),
+            {matching_sql}
+            SELECT COUNT(*)
+            FROM {previous_cte}
+            WHERE {previous_position} > 0;
+            """
         else:
             # Independent reach / Step 1 mode: Session contains current step
             curr_step = step.replace("'", "''")
             where_expr = f"list_position(events, '{curr_step}') > 0"
-        
-        sql = f"""
-        WITH split_events AS (
-            SELECT {split_sql} AS events
-            FROM {read_sql}
-            WHERE EVENT_PATH IS NOT NULL
-        )
-        SELECT COUNT(*) 
-        FROM split_events
-        WHERE {where_expr};
-        """
+            sql = f"""
+            WITH split_events AS (
+                SELECT {split_sql} AS events
+                FROM {read_sql}
+                WHERE EVENT_PATH IS NOT NULL
+            )
+            SELECT COUNT(*)
+            FROM split_events
+            WHERE {where_expr};
+            """
         count = con.execute(sql).fetchone()[0]
         cnt = count if count is not None else 0
         
@@ -269,21 +317,30 @@ def search_sessions(
     contains_event: Optional[str] = None,
     exact_subpath: Optional[str] = None,
     min_events: int = 1,
-    limit: int = 50
+    limit: int = 50,
+    delimiter: str = "->",
 ) -> pd.DataFrame:
     """
     Searches sessions containing specific events or subpaths.
     """
-    con = duckdb.connect(database=":memory:")
+    con = _connect()
     read_sql = _get_read_sql(file_path)
     
     where_clauses = [f"TOTAL_EVENTS >= {min_events}"]
+    clean_delimiter = delimiter.replace("'", "''")
     if contains_event:
         clean_ev = contains_event.replace("'", "''")
-        where_clauses.append(f"EVENT_PATH LIKE '%{clean_ev}%'")
+        events_expr = (
+            f"list_transform(string_split(EVENT_PATH, '{clean_delimiter}'), "
+            "event -> trim(event))"
+        )
+        where_clauses.append(f"list_contains({events_expr}, '{clean_ev}')")
     if exact_subpath:
         clean_sub = exact_subpath.replace("'", "''")
-        where_clauses.append(f"EVENT_PATH LIKE '%{clean_sub}%'")
+        where_clauses.append(
+            f"strpos('{clean_delimiter}' || EVENT_PATH || '{clean_delimiter}', "
+            f"'{clean_delimiter}' || '{clean_sub}' || '{clean_delimiter}') > 0"
+        )
         
     where_str = " AND ".join(where_clauses)
     
@@ -297,14 +354,37 @@ def search_sessions(
     con.close()
     return df
 
-def run_custom_query(file_path: str, sql_query: str) -> pd.DataFrame:
+def run_custom_query(
+    file_path: str,
+    sql_query: str,
+    max_rows: Optional[int] = None,
+    timeout_seconds: Optional[float] = None,
+    connection_callback=None,
+) -> pd.DataFrame:
     """
     Executes user-provided DuckDB SQL query. Replace 'data' table keyword with the read expression.
     """
-    con = duckdb.connect(database=":memory:")
+    con = _connect()
+    if connection_callback:
+        connection_callback(con)
     read_sql = _get_read_sql(file_path)
     
-    formatted_sql = sql_query.replace("data", read_sql)
-    df = con.execute(formatted_sql).fetchdf()
-    con.close()
-    return df
+    con.execute(f"CREATE VIEW data AS SELECT * FROM {read_sql}")
+    timer = None
+    if timeout_seconds:
+        timer = threading.Timer(timeout_seconds, con.interrupt)
+        timer.daemon = True
+        timer.start()
+    try:
+        cursor = con.execute(sql_query)
+        if max_rows is None:
+            return cursor.fetchdf()
+        rows = cursor.fetchmany(max_rows + 1)
+        if len(rows) > max_rows:
+            raise ValueError(f"Query result exceeds the {max_rows:,}-row limit")
+        columns = [column[0] for column in cursor.description]
+        return pd.DataFrame.from_records(rows, columns=columns)
+    finally:
+        if timer:
+            timer.cancel()
+        con.close()

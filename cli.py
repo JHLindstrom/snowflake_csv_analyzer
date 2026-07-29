@@ -41,6 +41,8 @@ from visualizer import (
     render_visual_funnel,
     export_html_report
 )
+from errors import TrishulaError
+from benchmark import run_benchmark
 
 console = Console()
 
@@ -48,7 +50,7 @@ def display_banner():
     banner = """
     [bold cyan]🔱 TRISHULA[/bold cyan]
     [bold yellow]Trident Engine for Large-Scale Session & Funnel Analytics[/bold yellow]
-    [dim]Out-of-core streaming analytics engine powered by DuckDB & Polars[/dim]
+    [dim]Local out-of-core conversion and analytics powered by DuckDB[/dim]
     """
     console.print(Panel(banner, border_style="cyan", expand=False))
 
@@ -56,6 +58,18 @@ def handle_generate_mock(args):
     console.print(f"[bold yellow][*] Generating mock data ({args.rows:,} rows)...[/bold yellow]")
     generate_csv(args.output, args.rows)
     console.print(f"[bold green]✓ Successfully generated synthetic data at '{args.output}'[/bold green]")
+
+
+def handle_benchmark(args):
+    console.print(f"[bold yellow][*] Running benchmark with {args.rows:,} rows...[/bold yellow]")
+    result = run_benchmark(args.rows, output_dir=args.output_dir, keep_files=args.keep)
+    table = Table(show_header=True, header_style="bold cyan")
+    table.add_column("Metric")
+    table.add_column("Value", style="yellow")
+    for key, value in result.items():
+        if value is not None:
+            table.add_row(key.replace("_", " ").title(), str(value))
+    console.print(table)
 
 def handle_inspect(args):
     res = inspect_file(args.file_path, limit=args.limit)
@@ -177,7 +191,8 @@ def handle_search(args):
         contains_event=args.event,
         exact_subpath=args.subpath,
         min_events=args.min_events,
-        limit=args.limit
+        limit=args.limit,
+        delimiter=args.delimiter,
     )
     console.print(f"\n[bold green]Found {len(df)} matching sessions (Limit: {args.limit})[/bold green]")
     table = Table(show_header=True, header_style="bold green")
@@ -425,6 +440,18 @@ def handle_web(args):
         console.print(f"[bold cyan][*] Starting Trishula Web without pre-loaded dataset.[/bold cyan]")
         console.print(f"[dim]You can load any CSV or Parquet file directly inside the browser UI![/dim]")
 
+    access_token = os.getenv("TRISHULA_ACCESS_TOKEN", "")
+    allow_network = os.getenv("TRISHULA_ALLOW_NETWORK", "").lower() in {"1", "true", "yes"}
+    cookie_secure = os.getenv("TRISHULA_COOKIE_SECURE", "").lower() in {"1", "true", "yes"}
+    if args.host not in {"127.0.0.1", "localhost", "::1"} and not (
+        access_token and allow_network and cookie_secure
+    ):
+        console.print(
+            "[bold red][!] Non-loopback binding requires TRISHULA_ACCESS_TOKEN, "
+            "TRISHULA_ALLOW_NETWORK=true, and TRISHULA_COOKIE_SECURE=true.[/bold red]"
+        )
+        sys.exit(2)
+
     console.print(f"\n[bold green]🚀 TRISHULA WEB Dashboard Running![/bold green]")
     console.print(f"[bold cyan]👉 Open in browser: http://{args.host}:{args.port}[/bold cyan]\n")
     uvicorn.run(app, host=args.host, port=args.port)
@@ -435,7 +462,7 @@ def main():
     subparsers = parser.add_subparsers(dest="command", help="Available subcommands")
 
     # Subcommand: web
-    web_p = subparsers.add_parser("web", help="Launch interactive React + Chart.js Web Dashboard")
+    web_p = subparsers.add_parser("web", help="Launch the local Trishula web dashboard")
     web_p.add_argument("file_path", nargs="?", help="Optional CSV or Parquet filepath to pre-load")
     web_p.add_argument("-d", "--delimiter", default="->", help="Event path separator token")
     web_p.add_argument("-p", "--port", type=int, default=8000, help="Web server port")
@@ -445,6 +472,13 @@ def main():
     mock_p = subparsers.add_parser("generate-mock", help="Generate synthetic CSV test data")
     mock_p.add_argument("-o", "--output", default="sample_snowflake_data.csv", help="Output CSV filepath")
     mock_p.add_argument("-r", "--rows", type=int, default=50000, help="Number of synthetic rows to generate")
+
+    benchmark_p = subparsers.add_parser(
+        "benchmark", help="Generate data and measure conversion, analysis, memory, and disk use"
+    )
+    benchmark_p.add_argument("-r", "--rows", type=int, default=1000000)
+    benchmark_p.add_argument("-o", "--output-dir", help="Keep artifacts and write benchmark-results.json")
+    benchmark_p.add_argument("--keep", action="store_true", help="Keep temporary benchmark files")
 
     # Subcommand: inspect
     inspect_p = subparsers.add_parser("inspect", help="Inspect schema, row count, and sample data")
@@ -472,6 +506,7 @@ def main():
     search_p.add_argument("-s", "--subpath", help="Filter sessions containing this exact subpath (e.g. 'Product_View->Add_To_Cart')")
     search_p.add_argument("-m", "--min-events", type=int, default=1, help="Minimum total events in session")
     search_p.add_argument("-l", "--limit", type=int, default=20, help="Max results")
+    search_p.add_argument("-d", "--delimiter", default="->", help="Event path separator token")
 
     # Subcommand: query
     query_p = subparsers.add_parser("query", help="Execute custom DuckDB SQL against file")
@@ -517,28 +552,34 @@ def main():
 
     args = parser.parse_args()
     
-    if args.command == "run-all":
-        handle_run_all(args)
-    elif args.command == "web":
-        handle_web(args)
-    elif args.command == "insights":
-        handle_insights(args)
-    elif args.command == "heatmap":
-        handle_heatmap(args)
-    elif args.command == "drop-offs":
-        handle_dropoffs(args)
-    elif args.command == "generate-mock":
-        handle_generate_mock(args)
-    elif args.command == "inspect":
-        handle_inspect(args)
-    elif args.command == "convert":
-        handle_convert(args)
-    elif args.command == "analyze":
-        handle_analyze(args)
-    elif args.command == "search":
-        handle_search(args)
-    elif args.command == "query":
-        handle_query(args)
+    try:
+        if args.command == "run-all":
+            handle_run_all(args)
+        elif args.command == "web":
+            handle_web(args)
+        elif args.command == "insights":
+            handle_insights(args)
+        elif args.command == "heatmap":
+            handle_heatmap(args)
+        elif args.command == "drop-offs":
+            handle_dropoffs(args)
+        elif args.command == "generate-mock":
+            handle_generate_mock(args)
+        elif args.command == "benchmark":
+            handle_benchmark(args)
+        elif args.command == "inspect":
+            handle_inspect(args)
+        elif args.command == "convert":
+            handle_convert(args)
+        elif args.command == "analyze":
+            handle_analyze(args)
+        elif args.command == "search":
+            handle_search(args)
+        elif args.command == "query":
+            handle_query(args)
+    except TrishulaError as exc:
+        console.print(f"[bold red][!] {exc}[/bold red]")
+        raise SystemExit(2) from exc
 
 if __name__ == "__main__":
     main()

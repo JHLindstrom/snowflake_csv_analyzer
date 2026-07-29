@@ -6,14 +6,20 @@ __pycache__/
 env/
 venv/
 ENV/
+.pycache/
+.pytest_cache/
+.test-deps/
+.verify-venv/
 
 # Data Files (Do not commit large CSV/Parquet data)
 *.csv
 *.parquet
 *.pq
+uploads/
 test_synthetic_snowflake.csv
 test_synthetic_snowflake.parquet
 sample_snowflake_data.csv
+test_synthetic_snowflake_dashboard.html
 
 # macOS
 .DS_Store
