@@ -528,6 +528,33 @@ def test_dashboard_has_shared_interactive_loading_states():
     assert "Counting event-to-event transitions" in dashboard
 
 
+def test_dashboard_has_compact_branding_and_right_aligned_help():
+    request = Request({"type": "http", "method": "GET", "path": "/", "headers": []})
+    request.state.csp_nonce = "test-nonce"
+    dashboard = server.index(request)
+
+    assert 'class="brand-icon"' in dashboard
+    assert '<span class="brand-copy"><span>TRISHULA</span><span>WEB</span></span>' in dashboard
+    assert "color: #fbbf24;" in dashboard
+    assert "@media (max-width: 1500px)" in dashboard
+    assert "flex-basis: 100%;" in dashboard
+    nav_actions = dashboard.split('<div class="nav-actions">', 1)[1].split("</div>", 1)[0]
+    assert nav_actions.index('id="printButton"') < nav_actions.index('data-tab="help"')
+
+
+def test_load_dataset_button_toggles_upload_panel_without_restart_control():
+    request = Request({"type": "http", "method": "GET", "path": "/", "headers": []})
+    request.state.csp_nonce = "test-nonce"
+    dashboard = server.index(request)
+
+    assert 'id="openFileButton" aria-controls="loaderCard" aria-expanded="false"' in dashboard
+    assert "function toggleFileLoader()" in dashboard
+    assert "loaderCard.style.display = shouldShow ? 'block' : 'none';" in dashboard
+    assert "loadButton.setAttribute('aria-expanded', String(shouldShow));" in dashboard
+    assert "restartButton" not in dashboard
+    assert "triggerServerRestart" not in dashboard
+
+
 def test_readme_has_no_removed_architecture_or_unverified_performance_claims():
     readme = Path("README.md").read_text(encoding="utf-8")
     stale_claims = ["Chart.js", "React", "zero memory overflow", "100x query"]

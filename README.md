@@ -92,7 +92,8 @@ trishula web
 
 The supported web workflow is:
 
-1. Upload a `.csv`, `.parquet`, or `.pq` dataset.
+1. Select **Load Dataset** to show or hide the upload panel, then upload a
+   `.csv`, `.parquet`, or `.pq` dataset.
 2. Confirm its managed size and available disk space.
 3. Review KPIs, construct an ordered funnel, inspect the transition matrix, or
    search exact event tokens and contiguous subpaths.
