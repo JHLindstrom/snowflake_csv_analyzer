@@ -171,7 +171,9 @@ def test_browser_upload_is_the_only_dataset_loading_workflow():
     assert ("/api/upload-file", "POST") in routes
     assert not any(path in {"/api/browse-file", "/api/load-file"} for path, _ in routes)
 
-    html = server.index(None).body.decode("utf-8")
+    request = Request({"type": "http", "method": "GET", "path": "/", "headers": []})
+    request.state.csp_nonce = "test-nonce"
+    html = server.index(request)
     assert "Upload CSV/Parquet" in html
     assert "Open Finder Window" not in html
     assert "ENTER LOCAL FILE PATH" not in html
