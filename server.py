@@ -164,22 +164,13 @@ def index():
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Trishula Web - Session & Funnel Intelligence Dashboard</title>
-    <!-- React 18 & Babel -->
-    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
-    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <!-- Chart.js -->
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <!-- Google Fonts & FontAwesome -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    
     <style>
         :root {
             --bg-dark: #090d16;
-            --card-bg: rgba(21, 30, 48, 0.7);
+            --card-bg: rgba(21, 30, 48, 0.75);
             --card-border: rgba(255, 255, 255, 0.08);
             --accent-cyan: #38bdf8;
             --accent-purple: #818cf8;
@@ -208,7 +199,7 @@ def index():
             justify-content: space-between;
             align-items: center;
             padding: 16px 32px;
-            background: rgba(15, 23, 42, 0.8);
+            background: rgba(15, 23, 42, 0.85);
             backdrop-filter: blur(16px);
             border-bottom: 1px solid var(--card-border);
             position: sticky;
@@ -266,9 +257,7 @@ def index():
             border: 1px solid var(--card-border);
             padding: 20px;
             border-radius: 14px;
-            transition: transform 0.2s;
         }
-        .kpi-card:hover { transform: translateY(-2px); }
         .kpi-title { font-size: 12px; text-transform: uppercase; color: var(--text-muted); font-weight: 700; letter-spacing: 0.05em; }
         .kpi-val { font-size: 30px; font-weight: 800; color: var(--accent-cyan); margin-top: 8px; }
 
@@ -300,23 +289,6 @@ def index():
             gap: 8px;
         }
 
-        .heatmap-grid {
-            display: grid;
-            gap: 4px;
-            overflow-x: auto;
-            margin-top: 20px;
-        }
-        .cell {
-            padding: 14px;
-            text-align: center;
-            border-radius: 6px;
-            font-family: 'JetBrains Mono', monospace;
-            font-size: 13px;
-            font-weight: 600;
-            transition: all 0.15s;
-        }
-        .cell:hover { transform: scale(1.05); z-index: 10; cursor: pointer; box-shadow: 0 0 12px rgba(56,189,248,0.4); }
-
         table { width: 100%; border-collapse: collapse; margin-top: 16px; font-size: 14px; }
         th, td { padding: 14px 18px; text-align: left; border-bottom: 1px solid var(--card-border); }
         th { background: rgba(15, 23, 42, 0.6); color: var(--text-muted); font-size: 12px; text-transform: uppercase; }
@@ -331,437 +303,400 @@ def index():
             font-size: 14px;
         }
         input:focus, select:focus { outline: none; border-color: var(--accent-cyan); }
+
+        .bar-container {
+            background: rgba(255,255,255,0.05);
+            border-radius: 6px;
+            height: 20px;
+            width: 100%;
+            overflow: hidden;
+        }
+        .bar-fill {
+            background: linear-gradient(90deg, #38bdf8, #818cf8);
+            height: 100%;
+            border-radius: 6px;
+            transition: width 0.4s ease;
+        }
+        .tab-panel { display: none; }
+        .tab-panel.active { display: block; }
     </style>
 </head>
 <body>
-    <div id="root"></div>
+    <!-- Top Navbar -->
+    <div class="navbar">
+        <div class="brand">🔱 TRISHULA WEB</div>
+        <div class="nav-items">
+            <button class="nav-btn active" onclick="switchTab('overview')">📊 Executive KPIs</button>
+            <button class="nav-btn" onclick="switchTab('funnel')">🎛️ Funnel Retention</button>
+            <button class="nav-btn" onclick="switchTab('heatmap')">🔥 Transition Matrix</button>
+            <button class="nav-btn" onclick="switchTab('search')">🔎 Session Explorer</button>
+        </div>
+        <div style="display: flex; gap: 10px; align-items: center;">
+            <button class="nav-btn" onclick="openFileModal()">📁 Load Dataset</button>
+            <select id="dedupeSelect" onchange="onDedupeChange()">
+                <option value="consecutive">Dedupe: Consecutive</option>
+                <option value="unique">Dedupe: Unique</option>
+                <option value="none">Dedupe: None (Raw)</option>
+            </select>
+            <button class="btn-action" onclick="window.print()">🖨️ Export PDF</button>
+        </div>
+    </div>
 
-    <script type="text/babel">
-        const { useState, useEffect, useRef } = React;
-
-        function App() {
-            const [activeTab, setActiveTab] = useState('overview');
-            const [state, setState] = useState(null);
-            const [insights, setInsights] = useState(null);
-            const [funnelData, setFunnelData] = useState([]);
-            const [heatmapData, setHeatmapData] = useState(null);
-            const [searchResults, setSearchResults] = useState([]);
-            const [topEvents, setTopEvents] = useState([]);
+    <div class="container">
+        <!-- Dataset Loader Card -->
+        <div id="loaderCard" class="glass-card" style="border: 2px solid rgba(56, 189, 248, 0.4); background: rgba(15, 23, 42, 0.95); padding: 36px; text-align: center;">
+            <h2 style="margin: 0 0 8px 0;">Load Dataset File</h2>
+            <p style="color: #94a3b8; margin: 0 0 24px 0;">Enter the absolute path to your Snowflake CSV or Parquet export on your Mac:</p>
             
-            const [selectedFunnel, setSelectedFunnel] = useState([]);
-            const [dedupeMode, setDedupeMode] = useState('consecutive');
-            const [searchEvent, setSearchEvent] = useState('');
-            const [searchSubpath, setSearchSubpath] = useState('');
-            const [inputFilePath, setInputFilePath] = useState('');
-            const [loadingFile, setLoadingFile] = useState(false);
-            const [fileError, setFileError] = useState('');
-            const [showFileModal, setShowFileModal] = useState(false);
+            <div style="display: flex; gap: 12px; max-width: 600px; margin: 0 auto;">
+                <input id="filePathInput" type="text" placeholder="/path/to/your_snowflake_export.csv" style="flex: 1;" />
+                <button class="btn-action" onclick="submitFileLoad()">⚡ Load Dataset</button>
+            </div>
+
+            <div id="fileError" style="color: #fb7185; margin-top: 16px; font-weight: bold; display: none;"></div>
             
-            const chartRef = useRef(null);
-            const chartInstance = useRef(null);
+            <div style="margin-top: 24px; font-size: 13px; color: #64748b;">
+                💡 Quick test sample: <strong>test_synthetic_snowflake.parquet</strong>
+                <button style="background: none; border: none; color: #38bdf8; cursor: pointer; margin-left: 8px; text-decoration: underline;" onclick="submitFileLoad('test_synthetic_snowflake.parquet')">Load Synthetic Sample</button>
+            </div>
+        </div>
 
-            useEffect(() => {
-                fetchState();
-            }, []);
+        <!-- Active Dataset Banner -->
+        <div id="datasetBanner" class="glass-card" style="padding: 16px 24px; display: none; justify-content: space-between; align-items: center;">
+            <div>
+                <span style="color: #94a3b8; font-size: 13px;">ACTIVE DATASET:</span>
+                <strong id="activeFileName" style="margin-left: 8px; color: #38bdf8;">-</strong>
+                <span id="activeFileSize" style="margin-left: 12px; color: #94a3b8;">-</span>
+            </div>
+            <span class="tag-pill">⚡ DuckDB Out-of-Core Engine</span>
+        </div>
 
-            useEffect(() => {
-                if (state && state.loaded) {
-                    loadInsights();
-                    loadEvents();
-                    loadHeatmap();
-                }
-            }, [state, dedupeMode]);
-
-            useEffect(() => {
-                if (selectedFunnel.length > 0) {
-                    loadFunnel();
-                }
-            }, [selectedFunnel, dedupeMode]);
-
-            const fetchState = async () => {
-                const res = await fetch('/api/state');
-                const data = await res.json();
-                setState(data);
-                if (!data.loaded) {
-                    setShowFileModal(true);
-                }
-            };
-
-            const handleLoadFile = async (pathToLoad) => {
-                const target = pathToLoad || inputFilePath;
-                if (!target) return;
-                setLoadingFile(true);
-                setFileError('');
-                try {
-                    const res = await fetch('/api/load-file', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ filepath: target })
-                    });
-                    const data = await res.json();
-                    if (!res.ok) throw new Error(data.detail || 'Failed to load file');
-                    setState(data);
-                    setShowFileModal(false);
-                } catch (err) {
-                    setFileError(err.message);
-                } finally {
-                    setLoadingFile(false);
-                }
-            };
-
-            const loadInsights = async () => {
-                const res = await fetch('/api/insights');
-                const data = await res.json();
-                setInsights(data);
-            };
-
-            const loadEvents = async () => {
-                const res = await fetch(`/api/events?dedupe=${dedupeMode}`);
-                const data = await res.json();
-                setTopEvents(data);
-                if (selectedFunnel.length === 0 && data.length > 0) {
-                    setSelectedFunnel(data.slice(0, 5).map(e => e.event_name));
-                }
-            };
-
-            const loadHeatmap = async () => {
-                const res = await fetch(`/api/heatmap?dedupe=${dedupeMode}`);
-                const data = await res.json();
-                setHeatmapData(data);
-            };
-
-            const loadFunnel = async () => {
-                const steps = selectedFunnel.join(',');
-                const res = await fetch(`/api/funnel?steps=${encodeURIComponent(steps)}&dedupe=${dedupeMode}`);
-                const data = await res.json();
-                setFunnelData(data);
-                renderFunnelChart(data);
-            };
-
-            const handleSearch = async () => {
-                let url = `/api/search?limit=25`;
-                if (searchEvent) url += `&event=${encodeURIComponent(searchEvent)}`;
-                if (searchSubpath) url += `&subpath=${encodeURIComponent(searchSubpath)}`;
-                const res = await fetch(url);
-                const data = await res.json();
-                setSearchResults(data);
-            };
-
-            const renderFunnelChart = (data) => {
-                if (!chartRef.current) return;
-                if (chartInstance.current) chartInstance.current.destroy();
-
-                const ctx = chartRef.current.getContext('2d');
-                chartInstance.current = new Chart(ctx, {
-                    type: 'bar',
-                    data: {
-                        labels: data.map(d => d.step_name),
-                        datasets: [{
-                            label: 'Sessions Reaching Step',
-                            data: data.map(d => d.session_count),
-                            backgroundColor: 'rgba(56, 189, 248, 0.7)',
-                            borderColor: '#38bdf8',
-                            borderWidth: 2,
-                            borderRadius: 8
-                        }]
-                    },
-                    options: {
-                        responsive: true,
-                        maintainAspectRatio: false,
-                        plugins: {
-                            legend: { display: false }
-                        },
-                        scales: {
-                            x: { grid: { display: false }, ticks: { color: '#94a3b8' } },
-                            y: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#94a3b8' } }
-                        }
-                    }
-                });
-            };
-
-            const getHeatmapBg = (val, max) => {
-                if (!val || max === 0) return 'rgba(30, 41, 59, 0.4)';
-                const ratio = val / max;
-                return `rgba(56, 189, 248, ${Math.max(0.15, ratio)})`;
-            };
-
-            return (
-                <div>
-                    {/* Top Navbar */}
-                    <div className="navbar">
-                        <div className="brand">
-                            <i className="fa-solid fa-trident"></i> TRISHULA WEB
-                        </div>
-                        <div className="nav-items">
-                            <button className={`nav-btn ${activeTab === 'overview' ? 'active' : ''}`} onClick={() => setActiveTab('overview')}>
-                                <i className="fa-solid fa-chart-pie"></i> Executive KPIs
-                            </button>
-                            <button className={`nav-btn ${activeTab === 'funnel' ? 'active' : ''}`} onClick={() => setActiveTab('funnel')}>
-                                <i className="fa-solid fa-filter"></i> Funnel Retention
-                            </button>
-                            <button className={`nav-btn ${activeTab === 'heatmap' ? 'active' : ''}`} onClick={() => setActiveTab('heatmap')}>
-                                <i className="fa-solid fa-fire"></i> Transition Matrix
-                            </button>
-                            <button className={`nav-btn ${activeTab === 'search' ? 'active' : ''}`} onClick={() => setActiveTab('search')}>
-                                <i className="fa-solid fa-magnifying-glass"></i> Session Explorer
-                            </button>
-                        </div>
-                        <div style={{display: 'flex', gap: '10px', alignItems: 'center'}}>
-                            <button className="nav-btn" onClick={() => setShowFileModal(true)}>
-                                <i className="fa-solid fa-folder-open"></i> Load Dataset
-                            </button>
-                            <select value={dedupeMode} onChange={(e) => setDedupeMode(e.target.value)}>
-                                <option value="consecutive">Dedupe: Consecutive</option>
-                                <option value="unique">Dedupe: Unique</option>
-                                <option value="none">Dedupe: None (Raw)</option>
-                            </select>
-                            <button className="btn-action" onClick={() => window.print()}>
-                                <i className="fa-solid fa-print"></i> Export PDF
-                            </button>
-                        </div>
-                    </div>
-
-                    <div className="container">
-                        {/* File Picker Modal / Banner */}
-                        {(!state || !state.loaded || showFileModal) && (
-                            <div className="glass-card" style={{border: '2px solid rgba(56, 189, 248, 0.4)', background: 'rgba(15, 23, 42, 0.95)', padding: '36px', textAlign: 'center'}}>
-                                <i className="fa-solid fa-file-csv" style={{fontSize: '48px', color: '#38bdf8', marginBottom: '16px'}}></i>
-                                <h2 style={{margin: '0 0 8px 0'}}>Load Dataset File</h2>
-                                <p style={{color: '#94a3b8', margin: '0 0 24px 0'}}>Enter the absolute path to your Snowflake CSV or Parquet export on your Mac:</p>
-                                
-                                <div style={{display: 'flex', gap: '12px', maxWidth: '600px', margin: '0 auto'}}>
-                                    <input 
-                                        type="text" 
-                                        placeholder="/path/to/your_snowflake_export.csv" 
-                                        value={inputFilePath}
-                                        onChange={(e) => setInputFilePath(e.target.value)}
-                                        style={{flex: 1, padding: '12px 16px', fontSize: '15px'}}
-                                    />
-                                    <button className="btn-action" onClick={() => handleLoadFile()} disabled={loadingFile}>
-                                        {loadingFile ? <i className="fa-solid fa-spinner fa-spin"></i> : <i className="fa-solid fa-bolt"></i>} Load Dataset
-                                    </button>
-                                </div>
-
-                                {fileError && <p style={{color: '#fb7185', marginTop: '16px', fontWeight: 'bold'}}>{fileError}</p>}
-                                
-                                <div style={{marginTop: '24px', fontSize: '13px', color: '#64748b'}}>
-                                    💡 Quick test sample: <strong>test_synthetic_snowflake.csv</strong> or <strong>test_synthetic_snowflake.parquet</strong>
-                                    <button style={{background: 'none', border: 'none', color: '#38bdf8', cursor: 'pointer', marginLeft: '8px', textDecoration: 'underline'}} onClick={() => handleLoadFile('test_synthetic_snowflake.parquet')}>Load Synthetic Sample</button>
-                                </div>
-                            </div>
-                        )}
-                        {/* File Status */}
-                        {state && state.loaded && (
-                            <div className="glass-card" style={{padding: '16px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
-                                <div>
-                                    <span style={{color: '#94a3b8', fontSize: '13px'}}>ACTIVE DATASET:</span>
-                                    <strong style={{marginLeft: '8px', color: '#38bdf8'}}>{state.parquet_file}</strong>
-                                    <span style={{marginLeft: '12px', color: '#94a3b8'}}>({state.file_size_mb} MB)</span>
-                                </div>
-                                <span className="tag-pill"><i className="fa-solid fa-bolt"></i> DuckDB Out-of-Core Engine</span>
-                            </div>
-                        )}
-
-                        {/* Tab 1: Executive KPIs */}
-                        {activeTab === 'overview' && insights && (
-                            <div>
-                                <div className="kpi-grid">
-                                    <div className="kpi-card">
-                                        <div className="kpi-title">Total Sessions Analyzed</div>
-                                        <div className="kpi-val">{insights.summary.total_sessions.toLocaleString()}</div>
-                                    </div>
-                                    <div className="kpi-card">
-                                        <div className="kpi-title">Bounce Rate</div>
-                                        <div className="kpi-val" style={{color: '#34d399'}}>{insights.summary.bounce_rate_pct}%</div>
-                                    </div>
-                                    <div className="kpi-card">
-                                        <div className="kpi-title">Avg Events / Session</div>
-                                        <div className="kpi-val">{insights.summary.avg_events_per_session}</div>
-                                    </div>
-                                    <div className="kpi-card">
-                                        <div className="kpi-title">Median Length (p50)</div>
-                                        <div className="kpi-val">{insights.summary.median_events} events</div>
-                                    </div>
-                                    <div className="kpi-card">
-                                        <div className="kpi-title">90th Percentile Length</div>
-                                        <div className="kpi-val" style={{color: '#fb7185'}}>{insights.summary.p90_events} events</div>
-                                    </div>
-                                </div>
-
-                                <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px'}}>
-                                    <div className="glass-card">
-                                        <h3><i className="fa-solid fa-right-to-bracket" style={{color: '#34d399'}}></i> Top Session Entry Points</h3>
-                                        <table>
-                                            <thead>
-                                                <tr><th>Entry Event</th><th>Sessions</th><th>Share %</th></tr>
-                                            </thead>
-                                            <tbody>
-                                                {insights.entry_points.map((e, idx) => (
-                                                    <tr key={idx}>
-                                                        <td><strong style={{color: '#f8fafc'}}>{e.event_name}</strong></td>
-                                                        <td>{e.entry_count.toLocaleString()}</td>
-                                                        <td><span className="tag-pill">{e.entry_share_pct}%</span></td>
-                                                    </tr>
-                                                ))}
-                                            </tbody>
-                                        </table>
-                                    </div>
-
-                                    <div className="glass-card">
-                                        <h3><i className="fa-solid fa-right-from-bracket" style={{color: '#fb7185'}}></i> Top Session Exit Points</h3>
-                                        <table>
-                                            <thead>
-                                                <tr><th>Exit Event</th><th>Sessions</th><th>Share %</th></tr>
-                                            </thead>
-                                            <tbody>
-                                                {insights.exit_points.map((e, idx) => (
-                                                    <tr key={idx}>
-                                                        <td><strong style={{color: '#f8fafc'}}>{e.event_name}</strong></td>
-                                                        <td>{e.exit_count.toLocaleString()}</td>
-                                                        <td><span className="tag-pill" style={{borderColor: 'rgba(251,113,133,0.3)', color: '#fb7185'}}>{e.exit_share_pct}%</span></td>
-                                                    </tr>
-                                                ))}
-                                            </tbody>
-                                        </table>
-                                    </div>
-                                </div>
-                            </div>
-                        )}
-
-                        {/* Tab 2: Funnel Retention Builder */}
-                        {activeTab === 'funnel' && (
-                            <div>
-                                <div className="glass-card">
-                                    <h3><i className="fa-solid fa-filter" style={{color: '#38bdf8'}}></i> Funnel Retention & Conversion Builder</h3>
-                                    <p style={{color: '#94a3b8', fontSize: '14px'}}>Add or remove steps to construct custom retention flows:</p>
-                                    
-                                    <div style={{display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '20px'}}>
-                                        {selectedFunnel.map((step, idx) => (
-                                            <span key={idx} className="tag-pill" style={{padding: '8px 16px', fontSize: '14px'}}>
-                                                #{idx+1} {step} 
-                                                <i className="fa-solid fa-xmark" style={{cursor: 'pointer', marginLeft: '6px'}} onClick={() => setSelectedFunnel(selectedFunnel.filter((_, i) => i !== idx))}></i>
-                                            </span>
-                                        ))}
-                                    </div>
-
-                                    <div style={{display: 'flex', gap: '12px'}}>
-                                        <select onChange={(e) => {
-                                            if (e.target.value && !selectedFunnel.includes(e.target.value)) {
-                                                setSelectedFunnel([...selectedFunnel, e.target.value]);
-                                            }
-                                        }}>
-                                            <option value="">+ Add Event Step to Funnel</option>
-                                            {topEvents.map((e, i) => (
-                                                <option key={i} value={e.event_name}>{e.event_name} ({e.occurrence_count.toLocaleString()} occurrences)</option>
-                                            ))}
-                                        </select>
-                                    </div>
-
-                                    <div style={{height: '340px', marginTop: '30px'}}>
-                                        <canvas ref={chartRef}></canvas>
-                                    </div>
-                                </div>
-
-                                <div className="glass-card">
-                                    <h3>Step Conversion Metrics</h3>
-                                    <table>
-                                        <thead>
-                                            <tr>
-                                                <th>#</th>
-                                                <th>Step Name</th>
-                                                <th>Sessions</th>
-                                                <th>Step Conversion</th>
-                                                <th>Step Drop-Off</th>
-                                                <th>Overall Retention</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            {funnelData.map((row) => (
-                                                <tr key={row.step_number}>
-                                                    <td><strong>{row.step_number}</strong></td>
-                                                    <td><strong style={{color: '#38bdf8'}}>{row.step_name}</strong></td>
-                                                    <td>{row.session_count.toLocaleString()}</td>
-                                                    <td><span className="tag-pill" style={{color: '#34d399'}}>{row.step_conversion_pct}%</span></td>
-                                                    <td><span className="tag-pill" style={{color: '#fb7185', borderColor: 'rgba(251,113,133,0.3)'}}>{row.step_dropoff_pct}%</span></td>
-                                                    <td><strong>{row.overall_conversion_pct}%</strong></td>
-                                                </tr>
-                                            ))}
-                                        </tbody>
-                                    </table>
-                                </div>
-                            </div>
-                        )}
-
-                        {/* Tab 3: Heatmap Matrix */}
-                        {activeTab === 'heatmap' && heatmapData && (
-                            <div className="glass-card">
-                                <h3><i className="fa-solid fa-fire" style={{color: '#fb7185'}}></i> Event Transition Heatmap Matrix</h3>
-                                <p style={{color: '#94a3b8', fontSize: '14px'}}>Hover or click cells to view flow intensity between events:</p>
-                                
-                                <div style={{overflowX: 'auto'}}>
-                                    <table style={{marginTop: '20px'}}>
-                                        <thead>
-                                            <tr>
-                                                <th>From / To</th>
-                                                {heatmapData.columns.map(col => <th key={col}>{col}</th>)}
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            {heatmapData.index.map((rowLabel, rIdx) => {
-                                                const maxVal = Math.max(...heatmapData.data.flat());
-                                                return (
-                                                    <tr key={rowLabel}>
-                                                        <td><strong style={{color: '#38bdf8'}}>{rowLabel}</strong></td>
-                                                        {heatmapData.data[rIdx].map((val, cIdx) => (
-                                                            <td key={cIdx} style={{background: getHeatmapBg(val, maxVal), textAlign: 'center', fontWeight: 'bold'}}>
-                                                                {val > 0 ? val.toLocaleString() : '-'}
-                                                            </td>
-                                                        ))}
-                                                    </tr>
-                                                );
-                                            })}
-                                        </tbody>
-                                    </table>
-                                </div>
-                            </div>
-                        )}
-
-                        {/* Tab 4: Session Explorer */}
-                        {activeTab === 'search' && (
-                            <div className="glass-card">
-                                <h3><i className="fa-solid fa-magnifying-glass" style={{color: '#38bdf8'}}></i> Session Search & Explorer</h3>
-                                <div style={{display: 'flex', gap: '16px', margin: '20px 0'}}>
-                                    <input placeholder="Filter by event name (e.g. VehicleView)" value={searchEvent} onChange={e => setSearchEvent(e.target.value)} />
-                                    <input placeholder="Filter by exact subpath (e.g. Search->Home)" value={searchSubpath} onChange={e => setSearchSubpath(e.target.value)} />
-                                    <button className="btn-action" onClick={handleSearch}><i className="fa-solid fa-search"></i> Search Sessions</button>
-                                </div>
-
-                                <table>
-                                    <thead>
-                                        <tr>
-                                            <th>Session ID</th>
-                                            <th>Event Navigation Path</th>
-                                            <th>Total Events</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {searchResults.map((s, idx) => (
-                                            <tr key={idx}>
-                                                <td><strong style={{color: '#38bdf8', fontFamily: 'monospace'}}>{s.SESSION}</strong></td>
-                                                <td style={{fontFamily: 'monospace', fontSize: '13px'}}>{s.EVENT_PATH}</td>
-                                                <td><span className="tag-pill">{s.TOTAL_EVENTS}</span></td>
-                                            </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
-                            </div>
-                        )}
-                    </div>
+        <!-- Tab 1: Executive KPIs -->
+        <div id="panel-overview" class="tab-panel active">
+            <div class="kpi-grid">
+                <div class="kpi-card">
+                    <div class="kpi-title">Total Sessions Analyzed</div>
+                    <div id="kpi-sessions" class="kpi-val">-</div>
                 </div>
-            );
+                <div class="kpi-card">
+                    <div class="kpi-title">Bounce Rate</div>
+                    <div id="kpi-bounce" class="kpi-val" style="color: #34d399;">-</div>
+                </div>
+                <div class="kpi-card">
+                    <div class="kpi-title">Avg Events / Session</div>
+                    <div id="kpi-avg" class="kpi-val">-</div>
+                </div>
+                <div class="kpi-card">
+                    <div class="kpi-title">Median Length (p50)</div>
+                    <div id="kpi-median" class="kpi-val">-</div>
+                </div>
+                <div class="kpi-card">
+                    <div class="kpi-title">90th Percentile Length</div>
+                    <div id="kpi-p90" class="kpi-val" style="color: #fb7185;">-</div>
+                </div>
+            </div>
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 24px;">
+                <div class="glass-card">
+                    <h3 style="color: #34d399;">Top Session Entry Points</h3>
+                    <table id="entryTable">
+                        <thead><tr><th>Entry Event</th><th>Sessions</th><th>Share %</th></tr></thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+
+                <div class="glass-card">
+                    <h3 style="color: #fb7185;">Top Session Exit Points</h3>
+                    <table id="exitTable">
+                        <thead><tr><th>Exit Event</th><th>Sessions</th><th>Share %</th></tr></thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tab 2: Funnel Retention Builder -->
+        <div id="panel-funnel" class="tab-panel">
+            <div class="glass-card">
+                <h3 style="color: #38bdf8;">Funnel Retention & Conversion Builder</h3>
+                <p style="color: #94a3b8; font-size: 14px;">Construct and evaluate step-by-step conversion flows:</p>
+                
+                <div id="funnelPills" style="display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px;"></div>
+
+                <div style="display: flex; gap: 12px;">
+                    <select id="addEventSelect" onchange="addStepToFunnel(this.value)">
+                        <option value="">+ Add Event Step to Funnel</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="glass-card">
+                <h3>Step Conversion Metrics</h3>
+                <table id="funnelMetricsTable">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>Step Name</th>
+                            <th>Sessions</th>
+                            <th>Step Conversion</th>
+                            <th>Step Drop-Off</th>
+                            <th style="width: 30%;">Retention Bar</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Tab 3: Heatmap Matrix -->
+        <div id="panel-heatmap" class="tab-panel">
+            <div class="glass-card">
+                <h3 style="color: #fb7185;">Event Transition Heatmap Matrix</h3>
+                <p style="color: #94a3b8; font-size: 14px;">Source x Target event-to-event flow intensity matrix:</p>
+                
+                <div style="overflow-x: auto;">
+                    <table id="heatmapTable" style="margin-top: 20px;">
+                        <thead></thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tab 4: Session Explorer -->
+        <div id="panel-search" class="tab-panel">
+            <div class="glass-card">
+                <h3 style="color: #38bdf8;">Session Search & Explorer</h3>
+                <div style="display: flex; gap: 16px; margin: 20px 0;">
+                    <input id="searchEventInput" placeholder="Filter by event name (e.g. VehicleView)" style="flex: 1;" />
+                    <input id="searchSubpathInput" placeholder="Filter by exact subpath (e.g. Search->Home)" style="flex: 1;" />
+                    <button class="btn-action" onclick="runSearch()">🔎 Search Sessions</button>
+                </div>
+
+                <table id="searchTable">
+                    <thead>
+                        <tr>
+                            <th>Session ID</th>
+                            <th>Event Navigation Path</th>
+                            <th>Total Events</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let stateData = null;
+        let selectedFunnelSteps = [];
+
+        window.addEventListener('DOMContentLoaded', () => {
+            fetchState();
+        });
+
+        async function fetchState() {
+            try {
+                const res = await fetch('/api/state');
+                stateData = await res.json();
+                if (stateData.loaded) {
+                    document.getElementById('loaderCard').style.display = 'none';
+                    document.getElementById('datasetBanner').style.display = 'flex';
+                    document.getElementById('activeFileName').innerText = stateData.parquet_file;
+                    document.getElementById('activeFileSize').innerText = `(${stateData.file_size_mb} MB)`;
+                    loadAllData();
+                } else {
+                    document.getElementById('loaderCard').style.display = 'block';
+                    document.getElementById('datasetBanner').style.display = 'none';
+                }
+            } catch (err) {
+                console.error(err);
+            }
         }
 
-        ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+        async function submitFileLoad(explicitPath) {
+            const path = explicitPath || document.getElementById('filePathInput').value.trim();
+            if (!path) return;
+
+            const errDiv = document.getElementById('fileError');
+            errDiv.style.display = 'none';
+
+            try {
+                const res = await fetch('/api/load-file', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ filepath: path })
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.detail || 'Failed to load file');
+                fetchState();
+            } catch (err) {
+                errDiv.innerText = err.message;
+                errDiv.style.display = 'block';
+            }
+        }
+
+        function openFileModal() {
+            document.getElementById('loaderCard').style.display = 'block';
+        }
+
+        function switchTab(tabName) {
+            document.querySelectorAll('.nav-btn').forEach(btn => btn.classList.remove('active'));
+            document.querySelectorAll('.tab-panel').forEach(panel => panel.classList.remove('active'));
+
+            if (event && event.target) {
+                event.target.classList.add('active');
+            }
+            document.getElementById(`panel-${tabName}`).classList.add('active');
+        }
+
+        function onDedupeChange() {
+            if (stateData && stateData.loaded) {
+                loadAllData();
+            }
+        }
+
+        function loadAllData() {
+            loadInsights();
+            loadEvents();
+            loadHeatmap();
+        }
+
+        async function loadInsights() {
+            const res = await fetch('/api/insights');
+            const data = await res.json();
+
+            document.getElementById('kpi-sessions').innerText = data.summary.total_sessions.toLocaleString();
+            document.getElementById('kpi-bounce').innerText = `${data.summary.bounce_rate_pct}%`;
+            document.getElementById('kpi-avg').innerText = data.summary.avg_events_per_session;
+            document.getElementById('kpi-median').innerText = `${data.summary.median_events} events`;
+            document.getElementById('kpi-p90').innerText = `${data.summary.p90_events} events`;
+
+            // Entry Table
+            const entryTbody = document.querySelector('#entryTable tbody');
+            entryTbody.innerHTML = data.entry_points.map(e => `
+                <tr>
+                    <td><strong style="color: #f8fafc">${e.event_name}</strong></td>
+                    <td>${e.entry_count.toLocaleString()}</td>
+                    <td><span class="tag-pill">${e.entry_share_pct}%</span></td>
+                </tr>
+            `).join('');
+
+            // Exit Table
+            const exitTbody = document.querySelector('#exitTable tbody');
+            exitTbody.innerHTML = data.exit_points.map(e => `
+                <tr>
+                    <td><strong style="color: #f8fafc">${e.event_name}</strong></td>
+                    <td>${e.exit_count.toLocaleString()}</td>
+                    <td><span class="tag-pill" style="color: #fb7185; border-color: rgba(251,113,133,0.3)">${e.exit_share_pct}%</span></td>
+                </tr>
+            `).join('');
+        }
+
+        async function loadEvents() {
+            const dedupe = document.getElementById('dedupeSelect').value;
+            const res = await fetch(`/api/events?dedupe=${dedupe}`);
+            const data = await res.json();
+
+            const select = document.getElementById('addEventSelect');
+            select.innerHTML = '<option value="">+ Add Event Step to Funnel</option>' + 
+                data.map(e => `<option value="${e.event_name}">${e.event_name} (${e.occurrence_count.toLocaleString()} occurrences)</option>`).join('');
+
+            if (selectedFunnelSteps.length === 0 && data.length > 0) {
+                selectedFunnelSteps = data.slice(0, 5).map(e => e.event_name);
+            }
+            renderFunnelPills();
+            loadFunnel();
+        }
+
+        function renderFunnelPills() {
+            const container = document.getElementById('funnelPills');
+            container.innerHTML = selectedFunnelSteps.map((step, idx) => `
+                <span class="tag-pill" style="padding: 8px 16px; font-size: 14px;">
+                    #${idx+1} ${step}
+                    <span style="cursor: pointer; margin-left: 8px; font-weight: bold; color: #fb7185" onclick="removeStepFromFunnel(${idx})">✕</span>
+                </span>
+            `).join('');
+        }
+
+        function addStepToFunnel(stepName) {
+            if (stepName && !selectedFunnelSteps.includes(stepName)) {
+                selectedFunnelSteps.push(stepName);
+                renderFunnelPills();
+                loadFunnel();
+            }
+        }
+
+        function removeStepFromFunnel(idx) {
+            selectedFunnelSteps.splice(idx, 1);
+            renderFunnelPills();
+            loadFunnel();
+        }
+
+        async function loadFunnel() {
+            if (selectedFunnelSteps.length === 0) return;
+            const dedupe = document.getElementById('dedupeSelect').value;
+            const stepsParam = selectedFunnelSteps.join(',');
+            const res = await fetch(`/api/funnel?steps=${encodeURIComponent(stepsParam)}&dedupe=${dedupe}`);
+            const data = await res.json();
+
+            const tbody = document.querySelector('#funnelMetricsTable tbody');
+            tbody.innerHTML = data.map(r => `
+                <tr>
+                    <td><strong>${r.step_number}</strong></td>
+                    <td><strong style="color: #38bdf8">${r.step_name}</strong></td>
+                    <td>${r.session_count.toLocaleString()}</td>
+                    <td><span class="tag-pill" style="color: #34d399">${r.step_conversion_pct}%</span></td>
+                    <td><span class="tag-pill" style="color: #fb7185; border-color: rgba(251,113,133,0.3)">${r.step_dropoff_pct}%</span></td>
+                    <td>
+                        <div class="bar-container">
+                            <div class="bar-fill" style="width: ${r.step_conversion_pct}%"></div>
+                        </div>
+                    </td>
+                </tr>
+            `).join('');
+        }
+
+        async function loadHeatmap() {
+            const dedupe = document.getElementById('dedupeSelect').value;
+            const res = await fetch(`/api/heatmap?dedupe=${dedupe}`);
+            const data = await res.json();
+
+            const thead = document.querySelector('#heatmapTable thead');
+            thead.innerHTML = `<tr><th>From / To</th>${data.columns.map(c => `<th>${c}</th>`).join('')}</tr>`;
+
+            const maxVal = Math.max(...data.data.flat());
+            const tbody = document.querySelector('#heatmapTable tbody');
+            tbody.innerHTML = data.index.map((rowLabel, rIdx) => `
+                <tr>
+                    <td><strong style="color: #38bdf8">${rowLabel}</strong></td>
+                    ${data.data[rIdx].map(val => {
+                        const bg = val > 0 ? `rgba(56, 189, 248, ${Math.max(0.15, val / maxVal)})` : 'rgba(30, 41, 59, 0.4)';
+                        return `<td style="background: ${bg}; text-align: center; font-weight: bold;">${val > 0 ? val.toLocaleString() : '-'}</td>`;
+                    }).join('')}
+                </tr>
+            `).join('');
+        }
+
+        async function runSearch() {
+            const ev = document.getElementById('searchEventInput').value.trim();
+            const sub = document.getElementById('searchSubpathInput').value.trim();
+            let url = '/api/search?limit=25';
+            if (ev) url += `&event=${encodeURIComponent(ev)}`;
+            if (sub) url += `&subpath=${encodeURIComponent(sub)}`;
+
+            const res = await fetch(url);
+            const data = await res.json();
+
+            const tbody = document.querySelector('#searchTable tbody');
+            tbody.innerHTML = data.map(s => `
+                <tr>
+                    <td><strong style="color: #38bdf8; font-family: monospace;">${s.SESSION}</strong></td>
+                    <td style="font-family: monospace; font-size: 13px;">${s.EVENT_PATH}</td>
+                    <td><span class="tag-pill">${s.TOTAL_EVENTS}</span></td>
+                </tr>
+            `).join('');
+        }
     </script>
 </body>
 </html>
@@ -769,16 +704,14 @@ def index():
 
 def main():
     parser = argparse.ArgumentParser(description="Trishula Web Dashboard Server")
-    parser.add_argument("--file", "-f", default="test_synthetic_snowflake.csv", help="CSV or Parquet dataset file path")
+    parser.add_argument("--file", "-f", default=None, help="Optional CSV or Parquet dataset file path")
     parser.add_argument("--port", "-p", type=int, default=8000, help="Port to run web server on")
     parser.add_argument("--host", type=str, default="127.0.0.1", help="Host binding")
     args = parser.parse_args()
 
-    if os.path.exists(args.file):
+    if args.file and os.path.exists(args.file):
         init_active_file(args.file)
-        print(f"[*] Loaded active dataset: '{args.file}'")
-    else:
-        print(f"[!] Warning: File '{args.file}' not found. Please load a dataset.")
+        print(f"[*] Pre-loaded dataset: '{args.file}'")
 
     print(f"\n🚀 TRISHULA WEB Dashboard running at: http://{args.host}:{args.port}")
     uvicorn.run(app, host=args.host, port=args.port)
