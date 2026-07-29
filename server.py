@@ -7,7 +7,6 @@ import json
 import secrets
 import shutil
 import sqlite3
-import subprocess
 import threading
 import time
 import uuid
@@ -89,9 +88,6 @@ QUERY_JOBS_LOCK = RLock()
 UPLOAD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 TRUSTED_LOCAL_MODE = os.getenv("TRISHULA_TRUSTED_LOCAL_MODE", "").lower() in {"1", "true", "yes"}
-ALLOWED_DATA_DIR = Path(
-    os.getenv("TRISHULA_ALLOWED_DATA_DIR", UPLOAD_DIR)
-).expanduser().resolve()
 MAX_UPLOAD_BYTES = int(os.getenv("TRISHULA_MAX_UPLOAD_BYTES", str(10 * 1024**3)))
 UPLOAD_CHUNK_BYTES = 1024 * 1024
 ALLOWED_EXTENSIONS = {".csv", ".parquet", ".pq"}
@@ -374,18 +370,6 @@ def _require_trusted_local_mode(feature: str) -> None:
         )
 
 
-def _resolve_allowed_data_path(file_path: str) -> Path:
-    candidate = Path(file_path).expanduser().resolve()
-    if candidate.suffix.lower() not in ALLOWED_EXTENSIONS:
-        raise HTTPException(status_code=400, detail="Only CSV and Parquet datasets are supported")
-    try:
-        candidate.relative_to(ALLOWED_DATA_DIR)
-    except ValueError as exc:
-        raise HTTPException(status_code=403, detail="File is outside the configured data directory") from exc
-    if not candidate.is_file():
-        raise HTTPException(status_code=400, detail="Dataset file does not exist")
-    return candidate
-
 def init_active_file(
     file_path: str,
     delimiter: str = "->",
@@ -428,20 +412,6 @@ def restart_server():
     threading.Thread(target=_restart, daemon=True).start()
     return {"success": True, "message": "Server process restarting..."}
 
-@app.get("/api/browse-file")
-def browse_file():
-    """Opens native macOS Finder file open dialog window."""
-    _require_trusted_local_mode("Native file browsing")
-    try:
-        cmd = 'osascript -e "POSIX path of (choose file with prompt \\"Select Snowflake CSV or Parquet file:\\")"'
-        output = subprocess.check_output(cmd, shell=True, timeout=120).decode('utf-8').strip()
-        if output and os.path.exists(output):
-            init_active_file(output)
-            return {"success": True, "filename": os.path.basename(output), "state": get_state()}
-    except Exception as e:
-        return {"success": False, "error": str(e)}
-    return {"success": False, "error": "No file selected"}
-
 @app.post("/api/upload-file")
 async def upload_file(file: UploadFile = File(...)):
     """Uploads a CSV or Parquet file via browser file selector."""
@@ -473,20 +443,6 @@ async def upload_file(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail=str(e))
     finally:
         await file.close()
-
-@app.post("/api/load-file")
-def load_file(payload: dict):
-    _require_trusted_local_mode("Loading server-local files")
-    file_path = payload.get("filepath", "").strip()
-    if not file_path:
-        raise HTTPException(status_code=400, detail="Missing dataset path")
-    try:
-        init_active_file(str(_resolve_allowed_data_path(file_path)))
-        return get_state()
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
 
 @app.get("/api/state")
 def get_state():
@@ -1005,31 +961,16 @@ def index(request: Request):
         <!-- Dataset Loader Card -->
         <div id="loaderCard" class="glass-card" style="border: 2px solid rgba(56, 189, 248, 0.4); background: rgba(15, 23, 42, 0.95); padding: 36px; text-align: center;">
             <h2 style="margin: 0 0 8px 0;">Select Dataset File</h2>
-            <p style="color: #94a3b8; margin: 0 0 24px 0;">Open your macOS Finder file dialog or choose a CSV/Parquet export:</p>
+            <p style="color: #94a3b8; margin: 0 0 24px 0;">Choose a CSV or Parquet export to upload:</p>
             
             <div style="display: flex; gap: 12px; max-width: 700px; margin: 0 auto; justify-content: center; flex-wrap: wrap;">
-                <button class="btn-action" id="nativeFinderButton" style="padding: 12px 24px; font-size: 15px;">
-                    📂 Open Finder Window...
-                </button>
-                <button class="btn-secondary" id="browserFileButton" style="padding: 12px 24px; font-size: 15px;">
+                <button class="btn-action" id="browserFileButton" style="padding: 12px 24px; font-size: 15px;">
                     📤 Upload CSV/Parquet
                 </button>
                 <input id="browserFileInput" type="file" accept=".csv,.parquet" style="display: none;" />
             </div>
 
-            <div style="margin-top: 20px; color: #64748b; font-size: 13px;">— OR ENTER LOCAL FILE PATH MANUALLY —</div>
-
-            <div style="display: flex; gap: 12px; max-width: 600px; margin: 16px auto 0 auto;">
-                <input id="filePathInput" type="text" placeholder="/path/to/your_snowflake_export.csv" style="flex: 1;" />
-                <button class="btn-secondary" id="loadPathButton">⚡ Load Path</button>
-            </div>
-
             <div id="fileError" style="color: #fb7185; margin-top: 16px; font-weight: bold; display: none;"></div>
-            
-            <div style="margin-top: 24px; font-size: 13px; color: #64748b;">
-                💡 Quick test sample: <strong>test_synthetic_snowflake.parquet</strong>
-                <button id="loadSampleButton" style="background: none; border: none; color: #38bdf8; cursor: pointer; margin-left: 8px; text-decoration: underline;">Load Synthetic Sample</button>
-            </div>
         </div>
 
         <!-- Active Dataset Banner -->
@@ -1244,8 +1185,8 @@ def index(request: Request):
                 <h2>Storage and safety</h2>
                 <ul>
                     <li>Browser uploads are streamed into generated filenames under <code>uploads/</code>.</li>
-                    <li><strong>Unload Dataset</strong> deletes managed browser-upload files, but never deletes a server-local source file.</li>
-                    <li>Custom SQL, native file browsing, local path loading, and restart require trusted-local mode.</li>
+                    <li><strong>Unload Dataset</strong> deletes the managed browser-upload files for the current session.</li>
+                    <li>Custom SQL and restart require trusted-local mode.</li>
                     <li>Custom SQL is bounded by configured time and result-row limits and can be cancelled through the job API.</li>
                 </ul>
             </div>
@@ -1294,16 +1235,11 @@ trishula-web --host 127.0.0.1 --port 8000</code></pre>
             document.getElementById('dedupeSelect').addEventListener('change', onDedupeChange);
             document.getElementById('restartButton').addEventListener('click', triggerServerRestart);
             document.getElementById('printButton').addEventListener('click', () => window.print());
-            document.getElementById('nativeFinderButton').addEventListener('click', triggerNativeFinder);
             document.getElementById('browserFileButton').addEventListener(
                 'click', () => document.getElementById('browserFileInput').click()
             );
             document.getElementById('browserFileInput').addEventListener(
                 'change', event => handleBrowserFileUpload(event.target.files)
-            );
-            document.getElementById('loadPathButton').addEventListener('click', () => submitFileLoad());
-            document.getElementById('loadSampleButton').addEventListener(
-                'click', () => submitFileLoad('test_synthetic_snowflake.parquet')
             );
             document.querySelectorAll('.funnel-preset').forEach(button => {
                 button.addEventListener('click', () => applyFunnelPreset(button.dataset.preset));
@@ -1365,25 +1301,6 @@ trishula-web --host 127.0.0.1 --port 8000</code></pre>
             }, 1500);
         }
 
-        async function triggerNativeFinder() {
-            const errDiv = document.getElementById('fileError');
-            errDiv.style.display = 'none';
-
-            try {
-                const res = await fetch('/api/browse-file');
-                const data = await res.json();
-                if (data.success && data.filepath) {
-                    document.getElementById('filePathInput').value = data.filepath;
-                    fetchState();
-                } else if (data.error && data.error !== 'No file selected') {
-                    throw new Error(data.error);
-                }
-            } catch (err) {
-                errDiv.innerText = err.message;
-                errDiv.style.display = 'block';
-            }
-        }
-
         async function handleBrowserFileUpload(files) {
             if (!files || files.length === 0) return;
             const file = files[0];
@@ -1400,28 +1317,6 @@ trishula-web --host 127.0.0.1 --port 8000</code></pre>
                 });
                 const data = await res.json();
                 if (!res.ok) throw new Error(data.detail || 'Upload failed');
-                fetchState();
-            } catch (err) {
-                errDiv.innerText = err.message;
-                errDiv.style.display = 'block';
-            }
-        }
-
-        async function submitFileLoad(explicitPath) {
-            const path = explicitPath || document.getElementById('filePathInput').value.trim();
-            if (!path) return;
-
-            const errDiv = document.getElementById('fileError');
-            errDiv.style.display = 'none';
-
-            try {
-                const res = await fetch('/api/load-file', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ filepath: path })
-                });
-                const data = await res.json();
-                if (!res.ok) throw new Error(data.detail || 'Failed to load file');
                 fetchState();
             } catch (err) {
                 errDiv.innerText = err.message;
