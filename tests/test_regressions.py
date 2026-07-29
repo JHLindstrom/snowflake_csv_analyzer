@@ -166,6 +166,20 @@ def test_dangerous_http_features_are_disabled_by_default(monkeypatch):
     assert exc.value.status_code == 403
 
 
+def test_browser_upload_is_the_only_dataset_loading_workflow():
+    routes = {(route.path, method) for route in server.app.routes for method in route.methods}
+    assert ("/api/upload-file", "POST") in routes
+    assert not any(path in {"/api/browse-file", "/api/load-file"} for path, _ in routes)
+
+    request = Request({"type": "http", "method": "GET", "path": "/", "headers": []})
+    request.state.csp_nonce = "test-nonce"
+    html = server.index(request)
+    assert "Upload CSV/Parquet" in html
+    assert "Open Finder Window" not in html
+    assert "ENTER LOCAL FILE PATH" not in html
+    assert "Load Synthetic Sample" not in html
+
+
 def test_login_rejects_wrong_token_and_sets_httponly_cookie(monkeypatch):
     monkeypatch.setattr(server, "ACCESS_TOKEN", "expected-token")
     with pytest.raises(HTTPException) as exc:

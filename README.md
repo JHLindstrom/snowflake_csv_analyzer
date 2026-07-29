@@ -97,8 +97,8 @@ The supported web workflow is:
 3. Review KPIs, construct an ordered funnel, inspect the transition matrix, or
    search exact event tokens and contiguous subpaths.
 4. Print or export the current dashboard.
-5. Select **Unload Dataset** when finished. This deletes browser-managed upload
-   files but never deletes a server-local source file.
+5. Select **Unload Dataset** when finished. This deletes the browser-managed
+   upload files for the current session.
 
 The **Help & How-to** tab in the UI contains the required schema, dedupe and
 funnel semantics, common commands, storage behavior, and troubleshooting steps.
@@ -191,15 +191,14 @@ telemetry. The live dashboard and generated HTML reports use self-contained
 assets and do not require public font or charting CDNs.
 
 The supported deployment is a single-user localhost process bound to
-`127.0.0.1`. Custom SQL, native file browsing, loading server-local paths, and
-process restart are disabled unless `TRISHULA_TRUSTED_LOCAL_MODE=true` is set.
+`127.0.0.1`. Custom SQL and process restart are disabled unless
+`TRISHULA_TRUSTED_LOCAL_MODE=true` is set.
 Enable that mode only on a trusted workstation; it deliberately exposes
 powerful local capabilities.
 
 Optional web configuration:
 
 ```bash
-export TRISHULA_ALLOWED_DATA_DIR=/absolute/path/to/datasets
 export TRISHULA_MAX_UPLOAD_BYTES=10737418240  # 10 GiB
 export TRISHULA_DUCKDB_MEMORY_LIMIT=1GB
 export TRISHULA_QUERY_TIMEOUT_SECONDS=30
@@ -217,8 +216,7 @@ dataset session through an HttpOnly, same-site cookie. Expired sessions and
 their managed upload files are removed automatically.
 
 The dashboard reports free disk space and managed dataset size. “Unload
-Dataset” clears the active session and deletes files created by browser upload;
-server-local source files are never deleted by that control.
+Dataset” clears the active session and deletes files created by browser upload.
 
 Trusted-local custom SQL can be submitted through `/api/query/start`, monitored
 through `/api/query/{job_id}`, and cancelled through
