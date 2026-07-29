@@ -411,10 +411,31 @@ def handle_run_all(args):
     console.print(f"[bold yellow]🌐 Click link to view High-Res Report in Browser:[/bold yellow]")
     console.print(f"[bold cyan]👉 file://{abs_report_url}[/bold cyan]\n")
 
+def handle_web(args):
+    import uvicorn
+    from server import app, init_active_file
+    
+    if not os.path.exists(args.file_path):
+        console.print(f"[bold red][!] File not found: {args.file_path}[/bold red]")
+        sys.exit(1)
+        
+    init_active_file(args.file_path, delimiter=args.delimiter)
+    
+    console.print(f"\n[bold green]🚀 TRISHULA WEB Dashboard Running![/bold green]")
+    console.print(f"[bold cyan]👉 Open in browser: http://{args.host}:{args.port}[/bold cyan]\n")
+    uvicorn.run(app, host=args.host, port=args.port)
+
 def main():
     display_banner()
     parser = argparse.ArgumentParser(description="Snowflake Session CSV & Parquet Data Parser and Analyzer")
     subparsers = parser.add_subparsers(dest="command", help="Available subcommands")
+
+    # Subcommand: web
+    web_p = subparsers.add_parser("web", help="Launch interactive React + Chart.js Web Dashboard")
+    web_p.add_argument("file_path", help="CSV or Parquet filepath")
+    web_p.add_argument("-d", "--delimiter", default="->", help="Event path separator token")
+    web_p.add_argument("-p", "--port", type=int, default=8000, help="Web server port")
+    web_p.add_argument("--host", default="127.0.0.1", help="Host address")
 
     # Subcommand: generate-mock
     mock_p = subparsers.add_parser("generate-mock", help="Generate synthetic CSV test data")
@@ -494,6 +515,8 @@ def main():
     
     if args.command == "run-all":
         handle_run_all(args)
+    elif args.command == "web":
+        handle_web(args)
     elif args.command == "insights":
         handle_insights(args)
     elif args.command == "heatmap":
