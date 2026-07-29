@@ -1118,6 +1118,7 @@ def index(request: Request):
                     <select id="addEventSelect">
                         <option value="">+ Select Event Step to Add...</option>
                     </select>
+                    <button class="primary-btn" id="calculateFunnelButton" disabled>Calculate Funnel</button>
                     <span style="font-size: 13px; color: #64748b;">(Steps are evaluated in chronological order)</span>
                 </div>
             </div>
@@ -1312,6 +1313,7 @@ trishula-web --host 127.0.0.1 --port 8000</code></pre>
                 button.addEventListener('click', () => applyFunnelPreset(button.dataset.preset));
             });
             document.getElementById('clearFunnelButton').addEventListener('click', clearFunnel);
+            document.getElementById('calculateFunnelButton').addEventListener('click', loadFunnel);
             document.getElementById('addEventSelect').addEventListener(
                 'change', event => addStepToFunnel(event.target.value)
             );
@@ -1537,14 +1539,10 @@ trishula-web --host 127.0.0.1 --port 8000</code></pre>
                 }
 
                 status.style.color = '#34d399';
-                status.textContent = `Loaded ${data.length} frequent events.`;
+                status.textContent = `Loaded ${data.length} frequent events. Choose a preset or add steps, then calculate.`;
                 presetButtons.forEach(button => button.disabled = false);
                 select.disabled = false;
-                if (selectedFunnelSteps.length === 0) {
-                    selectedFunnelSteps = data.slice(0, 4).map(e => e.event_name);
-                }
                 renderFunnelPills();
-                await loadFunnel();
             } catch (err) {
                 allTopEventsList = [];
                 selectedFunnelSteps = [];
@@ -1558,6 +1556,7 @@ trishula-web --host 127.0.0.1 --port 8000</code></pre>
 
         function renderFunnelPills() {
             const container = document.getElementById('funnelPills');
+            document.getElementById('calculateFunnelButton').disabled = selectedFunnelSteps.length === 0;
             if (selectedFunnelSteps.length === 0) {
                 container.innerHTML = `<span style="color: #64748b; font-size: 13px;">No funnel steps selected. Click a preset above or add a step!</span>`;
                 return;
@@ -1606,7 +1605,9 @@ trishula-web --host 127.0.0.1 --port 8000</code></pre>
             if (stepName) {
                 selectedFunnelSteps.push(stepName);
                 renderFunnelPills();
-                loadFunnel();
+                const status = document.getElementById('funnelEventStatus');
+                status.style.color = '#94a3b8';
+                status.textContent = 'Funnel steps changed. Select Calculate Funnel when ready.';
             }
             document.getElementById('addEventSelect').value = "";
         }
@@ -1614,8 +1615,13 @@ trishula-web --host 127.0.0.1 --port 8000</code></pre>
         function removeStepFromFunnel(idx) {
             selectedFunnelSteps.splice(idx, 1);
             renderFunnelPills();
-            if (selectedFunnelSteps.length > 0) loadFunnel();
-            else clearFunnel();
+            if (selectedFunnelSteps.length === 0) {
+                clearFunnel();
+                return;
+            }
+            const status = document.getElementById('funnelEventStatus');
+            status.style.color = '#94a3b8';
+            status.textContent = 'Funnel steps changed. Select Calculate Funnel when ready.';
         }
 
         async function loadFunnel() {

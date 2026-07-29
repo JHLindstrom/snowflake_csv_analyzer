@@ -225,93 +225,125 @@ def calculate_funnel(
     skip_check_callback = None
 ) -> pd.DataFrame:
     """
-    Calculates session reach or sequential funnel conversion in ultra-fast DuckDB SQL.
-    Uses C++ list position indexing without array transformation overhead for maximum throughput.
+    Calculates session reach or sequential funnel conversion in one DuckDB query.
+
+    Event paths are split and deduplicated once per session. Sequential funnels
+    then carry the matched position forward through a CTE chain, including when
+    the same event appears more than once in the requested funnel.
     """
     if not steps:
         raise ValueError("Funnel requires at least one step.")
 
-    con = _connect()
-    read_sql = _get_read_sql(file_path)
-    split_sql = _get_split_sql(file_path, delimiter, dedupe_mode=dedupe_mode)
     clean_steps = [s.strip() for s in steps]
+    if any(not step for step in clean_steps):
+        raise ValueError("Funnel steps cannot be empty.")
+
     total_steps = len(clean_steps)
-    
-    # Get total sessions count for baseline percent calculation
-    total_sessions = con.execute(f"SELECT COUNT(*) FROM {read_sql}").fetchone()[0]
-    total_sessions = total_sessions if total_sessions > 0 else 1
-    
-    funnel_data = []
-    first_count = None
-    prev_count = None
-    
+
+    # Preserve the callback contract before starting the single, indivisible
+    # DuckDB query. A callback can truncate the requested funnel.
+    active_steps = []
     for idx, step in enumerate(clean_steps):
-        # Check if user requested to skip remaining steps
         if skip_check_callback and skip_check_callback():
             break
-
         if progress_callback:
             should_continue = progress_callback(idx + 1, total_steps, step)
             if should_continue is False:
                 break
-            
-        sub_sequence = clean_steps[:idx+1]
-        
-        if sequential:
-            # Carry the matched position forward so repeated steps such as
-            # A -> B -> A are matched correctly.
-            position_ctes = []
-            previous_cte = "split_events"
-            previous_position = None
-            for position_idx, funnel_step in enumerate(sub_sequence, 1):
-                clean_step = funnel_step.replace("'", "''")
-                cte_name = f"matched_{position_idx}"
-                if previous_position is None:
-                    position_expr = f"list_position(events, '{clean_step}')"
-                else:
-                    relative_position = (
-                        f"list_position(list_slice(events, {previous_position} + 1, len(events)), "
-                        f"'{clean_step}')"
-                    )
-                    position_expr = (
-                        f"CASE WHEN {previous_position} > 0 AND {relative_position} > 0 "
-                        f"THEN {previous_position} + {relative_position} ELSE 0 END"
-                    )
-                position_ctes.append(
-                    f"{cte_name} AS (SELECT *, {position_expr} AS position_{position_idx} "
-                    f"FROM {previous_cte})"
+        active_steps.append(step)
+
+    if not active_steps:
+        return pd.DataFrame()
+
+    read_sql = _get_read_sql(file_path)
+    clean_delim = delimiter.replace("'", "''")
+    raw_events = (
+        f"list_transform(string_split(EVENT_PATH, '{clean_delim}'), "
+        "event -> trim(event))"
+    )
+    mode = dedupe_mode or "none"
+    if mode == "consecutive":
+        indexes = (
+            "list_filter(generate_series(1, len(raw_events)), "
+            "i -> i = 1 OR raw_events[i] != raw_events[i - 1])"
+        )
+        events_expr = f"list_transform({indexes}, i -> raw_events[i])"
+    elif mode == "unique":
+        indexes = (
+            "list_filter(generate_series(1, len(raw_events)), "
+            "i -> list_position(raw_events, raw_events[i]) = i)"
+        )
+        events_expr = f"list_transform({indexes}, i -> raw_events[i])"
+    else:
+        events_expr = "raw_events"
+
+    ctes = [
+        (
+            "raw_paths AS MATERIALIZED ("
+            f"SELECT {raw_events} AS raw_events FROM {read_sql}"
+            ")"
+        ),
+        (
+            "split_events AS MATERIALIZED ("
+            f"SELECT {events_expr} AS events FROM raw_paths"
+            ")"
+        ),
+    ]
+
+    count_expressions = []
+    final_cte = "split_events"
+    if sequential:
+        previous_position = None
+        for position_idx, funnel_step in enumerate(active_steps, 1):
+            clean_step = funnel_step.replace("'", "''")
+            cte_name = f"matched_{position_idx}"
+            if previous_position is None:
+                position_expr = f"list_position(events, '{clean_step}')"
+            else:
+                relative_position = (
+                    f"list_position(list_slice(events, {previous_position} + 1, len(events)), "
+                    f"'{clean_step}')"
                 )
-                previous_cte = cte_name
-                previous_position = f"position_{position_idx}"
-            matching_sql = ",\n".join(position_ctes)
-            sql = f"""
-            WITH split_events AS (
-                SELECT {split_sql} AS events
-                FROM {read_sql}
-                WHERE EVENT_PATH IS NOT NULL
-            ),
-            {matching_sql}
-            SELECT COUNT(*)
-            FROM {previous_cte}
-            WHERE {previous_position} > 0;
-            """
-        else:
-            # Independent reach / Step 1 mode: Session contains current step
-            curr_step = step.replace("'", "''")
-            where_expr = f"list_position(events, '{curr_step}') > 0"
-            sql = f"""
-            WITH split_events AS (
-                SELECT {split_sql} AS events
-                FROM {read_sql}
-                WHERE EVENT_PATH IS NOT NULL
+                position_expr = (
+                    f"CASE WHEN {previous_position} > 0 AND {relative_position} > 0 "
+                    f"THEN {previous_position} + {relative_position} ELSE 0 END"
+                )
+            ctes.append(
+                f"{cte_name} AS (SELECT *, {position_expr} AS position_{position_idx} "
+                f"FROM {final_cte})"
             )
-            SELECT COUNT(*)
-            FROM split_events
-            WHERE {where_expr};
-            """
-        count = con.execute(sql).fetchone()[0]
-        cnt = count if count is not None else 0
-        
+            final_cte = cte_name
+            previous_position = f"position_{position_idx}"
+            count_expressions.append(
+                f"COUNT(*) FILTER (WHERE {previous_position} > 0) AS step_{position_idx}_count"
+            )
+    else:
+        for position_idx, funnel_step in enumerate(active_steps, 1):
+            clean_step = funnel_step.replace("'", "''")
+            count_expressions.append(
+                "COUNT(*) FILTER "
+                f"(WHERE list_position(events, '{clean_step}') > 0) "
+                f"AS step_{position_idx}_count"
+            )
+
+    sql = (
+        "WITH\n" + ",\n".join(ctes)
+        + "\nSELECT COUNT(*) AS total_sessions,\n"
+        + ",\n".join(count_expressions)
+        + f"\nFROM {final_cte};"
+    )
+    con = _connect()
+    try:
+        result = con.execute(sql).fetchone()
+    finally:
+        con.close()
+
+    total_sessions = result[0] if result[0] > 0 else 1
+    counts = [count or 0 for count in result[1:]]
+    funnel_data = []
+    first_count = None
+    prev_count = None
+    for idx, (step, cnt) in enumerate(zip(active_steps, counts)):
         if idx == 0:
             first_count = cnt
             prev_count = cnt
@@ -332,8 +364,7 @@ def calculate_funnel(
             "step_dropoff_pct": dropoff_pct,
             "overall_conversion_pct": overall_pct
         })
-        
-    con.close()
+
     return pd.DataFrame(funnel_data)
 
 def search_sessions(

@@ -100,6 +100,12 @@ The supported web workflow is:
 5. Select **Unload Dataset** when finished. This deletes the browser-managed
    upload files for the current session.
 
+Opening **Funnel Retention** loads the available event names but does not start
+a funnel query. A quick preset selects its steps and calculates immediately.
+When constructing a custom funnel, add or remove all desired steps first and
+then select **Calculate Funnel**. Funnel paths are split and deduplicated once
+per query, rather than rescanning the dataset for every step.
+
 The **Help & How-to** tab in the UI contains the required schema, dedupe and
 funnel semantics, common commands, storage behavior, and troubleshooting steps.
 The README remains the authoritative reference for installation, configuration,
