@@ -1050,6 +1050,127 @@ def index(request: Request):
         .tab-panel { display: none; }
         .tab-panel.active { display: block; }
         .print-report-header { display: none; }
+        .loading-overlay {
+            align-items: center;
+            background: rgba(3, 7, 18, 0.7);
+            backdrop-filter: blur(6px);
+            display: none;
+            inset: 0;
+            justify-content: center;
+            padding: 24px;
+            position: fixed;
+            z-index: 1000;
+        }
+        .loading-overlay.visible {
+            animation: loading-fade-in 180ms ease-out;
+            display: flex;
+        }
+        .loading-overlay.pending {
+            display: flex;
+            opacity: 0;
+        }
+        .loading-card {
+            background: rgba(15, 23, 42, 0.97);
+            border: 1px solid rgba(56, 189, 248, 0.35);
+            border-radius: 18px;
+            box-shadow: 0 24px 80px rgba(0, 0, 0, 0.55);
+            max-width: 520px;
+            padding: 26px;
+            width: 100%;
+        }
+        .loading-heading {
+            align-items: center;
+            display: flex;
+            gap: 12px;
+            margin-bottom: 8px;
+        }
+        .loading-orbit {
+            animation: loading-spin 1.1s linear infinite;
+            border: 3px solid rgba(56, 189, 248, 0.2);
+            border-radius: 50%;
+            border-top-color: #38bdf8;
+            flex: 0 0 auto;
+            height: 28px;
+            width: 28px;
+        }
+        .loading-heading h2 {
+            font-size: 18px;
+            margin: 0;
+        }
+        .loading-stage {
+            color: #cbd5e1;
+            font-size: 14px;
+            min-height: 22px;
+        }
+        .loading-progress-track {
+            background: rgba(255,255,255,0.08);
+            border-radius: 999px;
+            height: 8px;
+            margin: 18px 0 12px;
+            overflow: hidden;
+            position: relative;
+        }
+        .loading-progress-bar {
+            background: linear-gradient(90deg, #38bdf8, #818cf8);
+            border-radius: inherit;
+            height: 100%;
+            transition: width 180ms ease-out;
+            width: 0;
+        }
+        .loading-progress-track.indeterminate .loading-progress-bar {
+            animation: loading-slide 1.25s ease-in-out infinite;
+            position: absolute;
+            width: 38%;
+        }
+        .loading-meta {
+            color: #94a3b8;
+            display: flex;
+            font-size: 12px;
+            justify-content: space-between;
+            min-height: 18px;
+        }
+        .loading-long-hint {
+            color: #a5b4fc;
+            display: none;
+            font-size: 12px;
+            line-height: 1.5;
+            margin-top: 12px;
+        }
+        .loading-long-hint.visible { display: block; }
+        .loading-skeleton {
+            display: grid;
+            gap: 8px;
+            margin-top: 18px;
+        }
+        .loading-skeleton span {
+            animation: loading-pulse 1.4s ease-in-out infinite;
+            background: linear-gradient(90deg, rgba(148,163,184,0.08), rgba(56,189,248,0.2), rgba(148,163,184,0.08));
+            background-size: 200% 100%;
+            border-radius: 6px;
+            display: block;
+            height: 10px;
+        }
+        .loading-skeleton span:nth-child(2) { width: 82%; }
+        .loading-skeleton span:nth-child(3) { width: 64%; }
+        @keyframes loading-spin { to { transform: rotate(360deg); } }
+        @keyframes loading-fade-in { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes loading-slide {
+            0% { left: -40%; }
+            100% { left: 105%; }
+        }
+        @keyframes loading-pulse {
+            0% { background-position: 100% 0; opacity: 0.55; }
+            50% { opacity: 1; }
+            100% { background-position: -100% 0; opacity: 0.55; }
+        }
+        @media (prefers-reduced-motion: reduce) {
+            .loading-overlay.visible,
+            .loading-orbit,
+            .loading-progress-track.indeterminate .loading-progress-bar,
+            .loading-skeleton span {
+                animation: none;
+            }
+        }
 
         @media print {
             :root {
@@ -1070,6 +1191,7 @@ def index(request: Request):
                 font-size: 10pt;
             }
             .navbar,
+            .loading-overlay,
             #loaderCard,
             #datasetBanner,
             .info-box,
@@ -1482,10 +1604,32 @@ trishula-web --host 127.0.0.1 --port 8000</code></pre>
                     <li><strong>Out of memory:</strong> lower <code>TRISHULA_DUCKDB_MEMORY_LIMIT</code> and confirm sufficient temporary disk space.</li>
                     <li><strong>High CPU usage:</strong> lower <code>TRISHULA_DUCKDB_THREADS</code>; the dataset banner shows the active thread and memory limits.</li>
                     <li><strong>Slow analytics:</strong> tabs load on demand and heavy queries are serialized by default. Benchmark before increasing <code>TRISHULA_DUCKDB_THREADS</code> or <code>TRISHULA_MAX_CONCURRENT_ANALYTICS</code>.</li>
+                    <li><strong>Loading indicator remains visible:</strong> review its current stage and elapsed time. After ten seconds Trishula confirms that the operation is still active; large exports can legitimately take several minutes.</li>
                     <li><strong>Upload rejected:</strong> check file extension, configured upload limit, and CSV/Parquet validity.</li>
                     <li><strong>Trusted feature returns 403:</strong> restart with <code>TRISHULA_TRUSTED_LOCAL_MODE=true</code> only on a trusted workstation.</li>
                 </ul>
             </div>
+        </div>
+    </div>
+
+    <div class="loading-overlay" id="loadingOverlay" role="status" aria-live="polite" aria-hidden="true">
+        <div class="loading-card">
+            <div class="loading-heading">
+                <div class="loading-orbit" aria-hidden="true"></div>
+                <h2 id="loadingTitle">Working on your analysis</h2>
+            </div>
+            <div class="loading-stage" id="loadingStage">Preparing…</div>
+            <div class="loading-progress-track indeterminate" id="loadingProgressTrack">
+                <div class="loading-progress-bar" id="loadingProgressBar"></div>
+            </div>
+            <div class="loading-meta">
+                <span id="loadingProgressLabel">Working…</span>
+                <span id="loadingElapsed"></span>
+            </div>
+            <div class="loading-long-hint" id="loadingLongHint">
+                Still working. Larger datasets can take several minutes; Trishula has not stopped.
+            </div>
+            <div class="loading-skeleton" aria-hidden="true"><span></span><span></span><span></span></div>
         </div>
     </div>
 
@@ -1498,11 +1642,95 @@ trishula-web --host 127.0.0.1 --port 8000</code></pre>
         let activeTab = 'overview';
         const loadedTabs = new Set();
         const tabLoadPromises = new Map();
+        let loadingSequence = 0;
 
         function escapeHtml(value) {
             const node = document.createElement('span');
             node.textContent = String(value ?? '');
             return node.innerHTML;
+        }
+
+        function startLoading({
+            title = 'Working on your analysis',
+            stage = 'Preparing…',
+            controls = [],
+            showDelayMs = 250
+        } = {}) {
+            const operationId = ++loadingSequence;
+            const overlay = document.getElementById('loadingOverlay');
+            const titleElement = document.getElementById('loadingTitle');
+            const stageElement = document.getElementById('loadingStage');
+            const elapsedElement = document.getElementById('loadingElapsed');
+            const progressTrack = document.getElementById('loadingProgressTrack');
+            const progressBar = document.getElementById('loadingProgressBar');
+            const progressLabel = document.getElementById('loadingProgressLabel');
+            const longHint = document.getElementById('loadingLongHint');
+            const startedAt = performance.now();
+            let shownAt = null;
+            let finished = false;
+            const controlledElements = Array.from(controls).filter(Boolean);
+            const previousDisabledStates = controlledElements.map(element => element.disabled);
+            controlledElements.forEach(element => { element.disabled = true; });
+
+            titleElement.textContent = title;
+            stageElement.textContent = stage;
+            elapsedElement.textContent = '';
+            progressTrack.classList.add('indeterminate');
+            progressBar.style.width = '';
+            progressLabel.textContent = 'Working…';
+            longHint.classList.remove('visible');
+            overlay.classList.add('pending');
+
+            const show = () => {
+                if (finished || operationId !== loadingSequence) return;
+                shownAt = performance.now();
+                overlay.classList.remove('pending');
+                overlay.classList.add('visible');
+                overlay.setAttribute('aria-hidden', 'false');
+            };
+            const showTimer = window.setTimeout(show, showDelayMs);
+            const elapsedTimer = window.setInterval(() => {
+                if (operationId !== loadingSequence) return;
+                const elapsedSeconds = Math.floor((performance.now() - startedAt) / 1000);
+                elapsedElement.textContent = elapsedSeconds > 0 ? `${elapsedSeconds}s elapsed` : '';
+                longHint.classList.toggle('visible', elapsedSeconds >= 10);
+            }, 500);
+
+            return {
+                setStage(nextStage) {
+                    if (operationId === loadingSequence) stageElement.textContent = nextStage;
+                },
+                setProgress(percent) {
+                    if (operationId !== loadingSequence) return;
+                    if (percent === null || percent === undefined) {
+                        progressTrack.classList.add('indeterminate');
+                        progressBar.style.width = '';
+                        progressLabel.textContent = 'Working…';
+                        return;
+                    }
+                    const bounded = Math.max(0, Math.min(100, Math.round(percent)));
+                    progressTrack.classList.remove('indeterminate');
+                    progressBar.style.width = `${bounded}%`;
+                    progressLabel.textContent = `${bounded}%`;
+                },
+                async finish() {
+                    if (finished) return;
+                    finished = true;
+                    window.clearTimeout(showTimer);
+                    window.clearInterval(elapsedTimer);
+                    previousDisabledStates.forEach((wasDisabled, index) => {
+                        controlledElements[index].disabled = wasDisabled;
+                    });
+                    if (operationId !== loadingSequence) return;
+                    const visibleFor = shownAt ? performance.now() - shownAt : 0;
+                    if (shownAt && visibleFor < 350) {
+                        await new Promise(resolve => window.setTimeout(resolve, 350 - visibleFor));
+                    }
+                    overlay.classList.remove('pending');
+                    overlay.classList.remove('visible');
+                    overlay.setAttribute('aria-hidden', 'true');
+                }
+            };
         }
 
         window.addEventListener('DOMContentLoaded', () => {
@@ -1549,7 +1777,7 @@ trishula-web --host 127.0.0.1 --port 8000</code></pre>
                         `⚡ DuckDB: ${stateData.duckdb_threads} threads · ${stateData.duckdb_memory_limit}`;
                     loadStorageStatus();
                     resetTabLoads();
-                    loadTabData(activeTab);
+                    await loadTabData(activeTab);
                 } else {
                     document.getElementById('loaderCard').style.display = 'block';
                     document.getElementById('datasetBanner').style.display = 'none';
@@ -1648,21 +1876,44 @@ trishula-web --host 127.0.0.1 --port 8000</code></pre>
             const file = files[0];
             const errDiv = document.getElementById('fileError');
             errDiv.style.display = 'none';
-
-            const formData = new FormData();
-            formData.append('file', file);
-
+            const loading = startLoading({
+                title: 'Loading dataset',
+                stage: `Uploading ${file.name} (${(file.size / (1024 * 1024)).toFixed(2)} MB)…`,
+                controls: [document.getElementById('browserFileButton')],
+                showDelayMs: 150
+            });
             try {
-                const res = await fetch('/api/upload-file', {
-                    method: 'POST',
-                    body: formData
+                const data = await new Promise((resolve, reject) => {
+                    const formData = new FormData();
+                    formData.append('file', file);
+                    const request = new XMLHttpRequest();
+                    request.open('POST', '/api/upload-file');
+                    request.responseType = 'json';
+                    request.upload.addEventListener('progress', event => {
+                        if (event.lengthComputable) {
+                            loading.setProgress((event.loaded / event.total) * 100);
+                        }
+                    });
+                    request.upload.addEventListener('load', () => {
+                        loading.setStage('Upload complete. Validating schema and preparing Parquet…');
+                        loading.setProgress(null);
+                    });
+                    request.addEventListener('load', () => {
+                        const response = request.response || {};
+                        if (request.status >= 200 && request.status < 300) resolve(response);
+                        else reject(new Error(response.detail || 'Upload failed'));
+                    });
+                    request.addEventListener('error', () => reject(new Error('Upload connection failed')));
+                    request.addEventListener('abort', () => reject(new Error('Upload was cancelled')));
+                    request.send(formData);
                 });
-                const data = await res.json();
-                if (!res.ok) throw new Error(data.detail || 'Upload failed');
-                fetchState();
+                loading.setStage('Dataset ready. Loading overview…');
+                await fetchState();
             } catch (err) {
                 errDiv.innerText = err.message;
                 errDiv.style.display = 'block';
+            } finally {
+                await loading.finish();
             }
         }
 
@@ -1725,34 +1976,41 @@ trishula-web --host 127.0.0.1 --port 8000</code></pre>
         }
 
         async function loadInsights() {
-            const res = await fetch('/api/insights');
-            const data = await res.json();
+            const loading = startLoading({
+                title: 'Loading Executive KPIs',
+                stage: 'Scanning sessions and calculating summary metrics…'
+            });
+            try {
+                const res = await fetch('/api/insights');
+                if (!res.ok) throw new Error('Executive KPI calculation failed');
+                const data = await res.json();
 
-            document.getElementById('kpi-sessions').innerText = data.summary.total_sessions.toLocaleString();
-            document.getElementById('kpi-bounce').innerText = `${data.summary.bounce_rate_pct}%`;
-            document.getElementById('kpi-avg').innerText = data.summary.avg_events_per_session;
-            document.getElementById('kpi-median').innerText = `${data.summary.median_events} events`;
-            document.getElementById('kpi-p90').innerText = `${data.summary.p90_events} events`;
+                document.getElementById('kpi-sessions').innerText = data.summary.total_sessions.toLocaleString();
+                document.getElementById('kpi-bounce').innerText = `${data.summary.bounce_rate_pct}%`;
+                document.getElementById('kpi-avg').innerText = data.summary.avg_events_per_session;
+                document.getElementById('kpi-median').innerText = `${data.summary.median_events} events`;
+                document.getElementById('kpi-p90').innerText = `${data.summary.p90_events} events`;
 
-            // Entry Table
-            const entryTbody = document.querySelector('#entryTable tbody');
-            entryTbody.innerHTML = data.entry_points.map(e => `
-                <tr>
-                    <td><strong style="color: #f8fafc">${escapeHtml(e.event_name)}</strong></td>
-                    <td>${e.entry_count.toLocaleString()}</td>
-                    <td><span class="tag-pill">${e.entry_share_pct}%</span></td>
-                </tr>
-            `).join('');
+                const entryTbody = document.querySelector('#entryTable tbody');
+                entryTbody.innerHTML = data.entry_points.map(e => `
+                    <tr>
+                        <td><strong style="color: #f8fafc">${escapeHtml(e.event_name)}</strong></td>
+                        <td>${e.entry_count.toLocaleString()}</td>
+                        <td><span class="tag-pill">${e.entry_share_pct}%</span></td>
+                    </tr>
+                `).join('');
 
-            // Exit Table
-            const exitTbody = document.querySelector('#exitTable tbody');
-            exitTbody.innerHTML = data.exit_points.map(e => `
-                <tr>
-                    <td><strong style="color: #f8fafc">${escapeHtml(e.event_name)}</strong></td>
-                    <td>${e.exit_count.toLocaleString()}</td>
-                    <td><span class="tag-pill" style="color: #fb7185; border-color: rgba(251,113,133,0.3)">${e.exit_share_pct}%</span></td>
-                </tr>
-            `).join('');
+                const exitTbody = document.querySelector('#exitTable tbody');
+                exitTbody.innerHTML = data.exit_points.map(e => `
+                    <tr>
+                        <td><strong style="color: #f8fafc">${escapeHtml(e.event_name)}</strong></td>
+                        <td>${e.exit_count.toLocaleString()}</td>
+                        <td><span class="tag-pill" style="color: #fb7185; border-color: rgba(251,113,133,0.3)">${e.exit_share_pct}%</span></td>
+                    </tr>
+                `).join('');
+            } finally {
+                await loading.finish();
+            }
         }
 
         async function loadEvents() {
@@ -1760,6 +2018,10 @@ trishula-web --host 127.0.0.1 --port 8000</code></pre>
             const select = document.getElementById('addEventSelect');
             const status = document.getElementById('funnelEventStatus');
             const presetButtons = document.querySelectorAll('.funnel-preset');
+            const loading = startLoading({
+                title: 'Loading Funnel Retention',
+                stage: 'Discovering the most frequent event steps…'
+            });
             status.style.color = '#94a3b8';
             status.textContent = 'Loading frequent events…';
             presetButtons.forEach(button => button.disabled = true);
@@ -1819,6 +2081,8 @@ trishula-web --host 127.0.0.1 --port 8000</code></pre>
                 placeholderOption.textContent = 'Events unavailable';
                 renderFunnelPills();
                 throw err;
+            } finally {
+                await loading.finish();
             }
         }
 
@@ -1898,6 +2162,11 @@ trishula-web --host 127.0.0.1 --port 8000</code></pre>
             const stepsParam = selectedFunnelSteps.join(',');
             const status = document.getElementById('funnelEventStatus');
             const tbody = document.querySelector('#funnelMetricsTable tbody');
+            const loading = startLoading({
+                title: 'Calculating Funnel Retention',
+                stage: `Matching ${selectedFunnelSteps.length} ordered steps across sessions…`,
+                controls: [document.getElementById('calculateFunnelButton')]
+            });
             try {
                 status.style.color = '#94a3b8';
                 status.textContent = 'Calculating funnel retention…';
@@ -1929,6 +2198,8 @@ trishula-web --host 127.0.0.1 --port 8000</code></pre>
                 status.style.color = '#fb7185';
                 status.textContent = `Unable to calculate funnel: ${err.message}`;
                 tbody.innerHTML = `<tr><td colspan="6" style="text-align: center; color: #fb7185;">Funnel calculation failed.</td></tr>`;
+            } finally {
+                await loading.finish();
             }
         }
 
@@ -1938,6 +2209,10 @@ trishula-web --host 127.0.0.1 --port 8000</code></pre>
             const status = document.getElementById('heatmapStatus');
             const thead = document.querySelector('#heatmapTable thead');
             const tbody = document.querySelector('#heatmapTable tbody');
+            const loading = startLoading({
+                title: 'Building Transition Matrix',
+                stage: 'Counting event-to-event transitions across sessions…'
+            });
             status.style.color = '#94a3b8';
             status.textContent = 'Calculating transition matrix…';
             status.style.display = 'block';
@@ -1977,6 +2252,8 @@ trishula-web --host 127.0.0.1 --port 8000</code></pre>
             } catch (err) {
                 status.style.color = '#fb7185';
                 status.textContent = `Unable to load transition matrix: ${err.message}`;
+            } finally {
+                await loading.finish();
             }
         }
 
@@ -2101,6 +2378,11 @@ trishula-web --host 127.0.0.1 --port 8000</code></pre>
             const sub = document.getElementById('searchSubpathInput').value.trim();
             const status = document.getElementById('searchStatus');
             const tbody = document.querySelector('#searchTable tbody');
+            const loading = startLoading({
+                title: 'Searching Sessions',
+                stage: 'Filtering navigation journeys and preparing compact previews…',
+                controls: [document.getElementById('searchButton')]
+            });
             let url = '/api/search?limit=25';
             if (ev) url += `&event=${encodeURIComponent(ev)}`;
             if (sub) url += `&subpath=${encodeURIComponent(sub)}`;
@@ -2136,6 +2418,8 @@ trishula-web --host 127.0.0.1 --port 8000</code></pre>
                 status.style.color = '#fb7185';
                 status.textContent = `Unable to search sessions: ${err.message}`;
                 tbody.innerHTML = `<tr><td colspan="3" style="text-align: center; color: #fb7185;">Session search failed.</td></tr>`;
+            } finally {
+                await loading.finish();
             }
         }
     </script>
