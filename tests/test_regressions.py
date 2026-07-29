@@ -508,6 +508,26 @@ def test_dashboard_exports_only_the_selected_tab():
     assert "thead { display: table-header-group; }" in dashboard
 
 
+def test_dashboard_has_shared_interactive_loading_states():
+    request = Request({"type": "http", "method": "GET", "path": "/", "headers": []})
+    request.state.csp_nonce = "test-nonce"
+    dashboard = server.index(request)
+
+    assert 'id="loadingOverlay"' in dashboard
+    assert 'id="loadingProgressBar"' in dashboard
+    assert 'id="loadingElapsed"' in dashboard
+    assert "function startLoading(" in dashboard
+    assert "showDelayMs = 250" in dashboard
+    assert "loading-overlay.pending" in dashboard
+    assert "elapsedSeconds >= 10" in dashboard
+    assert "prefers-reduced-motion: reduce" in dashboard
+    assert "new XMLHttpRequest()" in dashboard
+    assert "request.upload.addEventListener('progress'" in dashboard
+    assert "Validating schema and preparing Parquet" in dashboard
+    assert "Scanning sessions and calculating summary metrics" in dashboard
+    assert "Counting event-to-event transitions" in dashboard
+
+
 def test_readme_has_no_removed_architecture_or_unverified_performance_claims():
     readme = Path("README.md").read_text(encoding="utf-8")
     stale_claims = ["Chart.js", "React", "zero memory overflow", "100x query"]

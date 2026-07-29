@@ -113,6 +113,12 @@ highlighted, and each result can be expanded independently inside a bounded
 scroll area. Use **Collapse expanded journeys** to restore the compact result
 set.
 
+Uploads and analytics display a shared staged loading indicator. File uploads
+show byte progress before validation and CSV-to-Parquet preparation; analytics
+show their current operation and elapsed time. The indicator waits briefly
+before appearing to avoid flicker on fast requests, and reports that Trishula is
+still active when an operation exceeds ten seconds.
+
 The **Help & How-to** tab in the UI contains the required schema, dedupe and
 funnel semantics, common commands, storage behavior, and troubleshooting steps.
 The README remains the authoritative reference for installation, configuration,
