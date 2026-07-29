@@ -614,7 +614,8 @@ def test_performance_profile_writes_reusable_artifacts(tmp_path):
     result = run_performance_profile(100, tmp_path, top_functions=5)
     assert Path(result["profile"]).is_file()
     assert Path(result["summary"]).is_file()
-    assert "run_benchmark" in Path(result["summary"]).read_text(encoding="utf-8")
+    assert "function calls" in Path(result["summary"]).read_text(encoding="utf-8")
+    assert result["benchmark"]["rows"] == 100
     assert (tmp_path / "benchmark-results.json").is_file()
 
 
