@@ -1,14 +1,8 @@
-import sys
 import os
-
-user_site = os.path.expanduser("~/Library/Python/3.9/lib/python/site-packages")
-if os.path.exists(user_site) and user_site not in sys.path:
-    sys.path.insert(0, user_site)
 
 import duckdb
 import pandas as pd
 from typing import Dict, Any
-from event_parser import sanitize_event_path_sql
 
 
 def _connect() -> duckdb.DuckDBPyConnection:
@@ -121,50 +115,119 @@ def get_transition_matrix(
     """
     Generates a 2D Transition Matrix (Source Event x Target Event) for heatmaps.
     """
+    if dedupe_mode not in {"none", "consecutive", "unique"}:
+        raise ValueError(f"Unsupported deduplication mode: {dedupe_mode}")
+
     con = _connect()
     read_sql = _get_read_sql(file_path)
     clean_delim = delimiter.replace("'", "''")
-    path_expr = "EVENT_PATH"
-    if dedupe_mode != "none":
-        path_expr = sanitize_event_path_sql(
-            "EVENT_PATH", delimiter=delimiter, mode=dedupe_mode
-        )
-    
-    # 1. Find top N events
-    top_events_sql = f"""
-    WITH unnested AS (
-        SELECT unnest(string_split({path_expr}, '{clean_delim}')) AS event_name
-        FROM {read_sql}
-    )
-    SELECT trim(event_name) FROM unnested WHERE trim(event_name) != ''
-    GROUP BY 1 ORDER BY COUNT(*) DESC LIMIT {top_n};
-    """
-    top_events = [r[0] for r in con.execute(top_events_sql).fetchall()]
-    
-    # 2. Get transition counts between top events
-    pairs_sql = f"""
-    WITH split_events AS (
-        SELECT string_split({path_expr}, '{clean_delim}') AS events
+    mode_filter = {
+        "none": "TRUE",
+        "consecutive": "event_index = 1 OR event_name IS DISTINCT FROM previous_event",
+        "unique": "event_occurrence = 1",
+    }[dedupe_mode]
+
+    # Split each path once, then use window functions for deduplication and
+    # adjacency. Expanding sanitize_event_path_sql inside a per-event lambda
+    # caused near-quadratic work on long paths.
+    query = f"""
+    WITH paths AS (
+        SELECT
+            row_number() OVER () AS path_id,
+            list_transform(
+                string_split(EVENT_PATH, '{clean_delim}'),
+                event_name -> trim(event_name)
+            ) AS events
         FROM {read_sql}
         WHERE EVENT_PATH IS NOT NULL
     ),
-    pairs AS (
-        SELECT 
-            trim(events[i]) AS source_event,
-            trim(events[i+1]) AS target_event
-        FROM split_events, generate_series(1, len(events) - 1) AS t(i)
+    expanded AS (
+        SELECT
+            path_id,
+            event_index,
+            event_name,
+            lag(event_name) OVER (
+                PARTITION BY path_id ORDER BY event_index
+            ) AS previous_event,
+            row_number() OVER (
+                PARTITION BY path_id, event_name ORDER BY event_index
+            ) AS event_occurrence
+        FROM paths,
+             unnest(events) WITH ORDINALITY AS event(event_name, event_index)
+        WHERE event_name != ''
+    ),
+    filtered AS (
+        SELECT path_id, event_index, event_name
+        FROM expanded
+        WHERE {mode_filter}
+    ),
+    event_counts AS (
+        SELECT event_name, count(*) AS event_count
+        FROM filtered
+        GROUP BY event_name
+    ),
+    top_events AS (
+        SELECT
+            event_name,
+            row_number() OVER (
+                ORDER BY event_count DESC, event_name
+            ) AS event_rank
+        FROM event_counts
+        ORDER BY event_count DESC, event_name
+        LIMIT {top_n}
+    ),
+    sequenced AS (
+        SELECT
+            path_id,
+            event_index,
+            event_name AS source_event,
+            lead(event_name) OVER (
+                PARTITION BY path_id ORDER BY event_index
+            ) AS target_event
+        FROM filtered
+    ),
+    transition_counts AS (
+        SELECT source_event, target_event, count(*) AS transition_count
+        FROM sequenced
+        WHERE target_event IS NOT NULL
+        GROUP BY source_event, target_event
     )
-    SELECT source_event, target_event, COUNT(*) AS count
-    FROM pairs
-    GROUP BY 1, 2;
+    SELECT
+        source.event_name AS source_event,
+        target.event_name AS target_event,
+        coalesce(transitions.transition_count, 0) AS transition_count,
+        source.event_rank AS source_rank,
+        target.event_rank AS target_rank
+    FROM top_events AS source
+    CROSS JOIN top_events AS target
+    LEFT JOIN transition_counts AS transitions
+        ON transitions.source_event = source.event_name
+       AND transitions.target_event = target.event_name
+    ORDER BY source.event_rank, target.event_rank;
     """
-    pairs_df = con.execute(pairs_sql).fetchdf()
-    con.close()
-    
-    # Pivot into 2D matrix
-    matrix = pd.DataFrame(0, index=top_events, columns=top_events)
-    for row in pairs_df.itertuples():
-        if row.source_event in matrix.index and row.target_event in matrix.columns:
-            matrix.loc[row.source_event, row.target_event] = row.count
-            
+    try:
+        matrix_rows = con.execute(query).fetchdf()
+    finally:
+        con.close()
+
+    if matrix_rows.empty:
+        return pd.DataFrame(dtype="int64")
+
+    top_events = (
+        matrix_rows[["source_event", "source_rank"]]
+        .drop_duplicates()
+        .sort_values("source_rank")["source_event"]
+        .tolist()
+    )
+    matrix = (
+        matrix_rows.pivot(
+            index="source_event",
+            columns="target_event",
+            values="transition_count",
+        )
+        .reindex(index=top_events, columns=top_events, fill_value=0)
+        .astype("int64")
+    )
+    matrix.index.name = None
+    matrix.columns.name = None
     return matrix
