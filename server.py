@@ -1372,6 +1372,28 @@ def index(request: Request):
                 overflow-wrap: anywhere;
                 padding: 1.5mm;
             }
+            body.printing-help #panel-help .glass-card {
+                break-inside: avoid-page;
+                page-break-inside: avoid;
+            }
+            body.printing-help #panel-help h2 {
+                break-after: avoid-page;
+                page-break-after: avoid;
+            }
+            body.printing-help #panel-help p,
+            body.printing-help #panel-help li {
+                orphans: 3;
+                widows: 3;
+            }
+            body.printing-help #panel-help pre,
+            body.printing-help #panel-help table {
+                break-inside: avoid-page;
+                page-break-inside: avoid;
+            }
+            body.printing-help #panel-help pre {
+                overflow-wrap: anywhere;
+                white-space: pre-wrap;
+            }
             a { color: #0369a1; text-decoration: none; }
         }
     </style>
@@ -1917,9 +1939,11 @@ trishula-web --host 127.0.0.1 --port 8000</code></pre>
                 : '@page { size: A4 portrait; margin: 14mm; }';
             document.head.appendChild(pageStyle);
             document.body.classList.add('printing-selected-tab');
+            document.body.classList.add(`printing-${activeTab}`);
 
             const restoreUi = () => {
                 document.body.classList.remove('printing-selected-tab');
+                document.body.classList.remove(`printing-${activeTab}`);
                 pageStyle.remove();
                 printButton.disabled = false;
                 printButton.textContent = originalButtonText;
