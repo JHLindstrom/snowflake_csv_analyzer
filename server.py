@@ -63,6 +63,17 @@ def init_active_file(file_path: str, delimiter: str = "->"):
         
     ACTIVE_DELIMITER = detect_delimiter(ACTIVE_PARQUET) if delimiter == "->" else delimiter
 
+@app.post("/api/load-file")
+def load_file(payload: dict):
+    file_path = payload.get("filepath", "").strip()
+    if not file_path or not os.path.exists(file_path):
+        raise HTTPException(status_code=400, detail=f"File not found on machine: {file_path}")
+    try:
+        init_active_file(file_path)
+        return get_state()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
 @app.get("/api/state")
 def get_state():
     if not ACTIVE_PARQUET or not os.path.exists(ACTIVE_PARQUET):
@@ -341,6 +352,10 @@ def index():
             const [dedupeMode, setDedupeMode] = useState('consecutive');
             const [searchEvent, setSearchEvent] = useState('');
             const [searchSubpath, setSearchSubpath] = useState('');
+            const [inputFilePath, setInputFilePath] = useState('');
+            const [loadingFile, setLoadingFile] = useState(false);
+            const [fileError, setFileError] = useState('');
+            const [showFileModal, setShowFileModal] = useState(false);
             
             const chartRef = useRef(null);
             const chartInstance = useRef(null);
@@ -367,6 +382,31 @@ def index():
                 const res = await fetch('/api/state');
                 const data = await res.json();
                 setState(data);
+                if (!data.loaded) {
+                    setShowFileModal(true);
+                }
+            };
+
+            const handleLoadFile = async (pathToLoad) => {
+                const target = pathToLoad || inputFilePath;
+                if (!target) return;
+                setLoadingFile(true);
+                setFileError('');
+                try {
+                    const res = await fetch('/api/load-file', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ filepath: target })
+                    });
+                    const data = await res.json();
+                    if (!res.ok) throw new Error(data.detail || 'Failed to load file');
+                    setState(data);
+                    setShowFileModal(false);
+                } catch (err) {
+                    setFileError(err.message);
+                } finally {
+                    setLoadingFile(false);
+                }
             };
 
             const loadInsights = async () => {
@@ -466,19 +506,50 @@ def index():
                                 <i className="fa-solid fa-magnifying-glass"></i> Session Explorer
                             </button>
                         </div>
-                        <div>
+                        <div style={{display: 'flex', gap: '10px', alignItems: 'center'}}>
+                            <button className="nav-btn" onClick={() => setShowFileModal(true)}>
+                                <i className="fa-solid fa-folder-open"></i> Load Dataset
+                            </button>
                             <select value={dedupeMode} onChange={(e) => setDedupeMode(e.target.value)}>
                                 <option value="consecutive">Dedupe: Consecutive</option>
                                 <option value="unique">Dedupe: Unique</option>
                                 <option value="none">Dedupe: None (Raw)</option>
                             </select>
-                            <button className="btn-action" style={{marginLeft: '12px'}} onClick={() => window.print()}>
+                            <button className="btn-action" onClick={() => window.print()}>
                                 <i className="fa-solid fa-print"></i> Export PDF
                             </button>
                         </div>
                     </div>
 
                     <div className="container">
+                        <!-- File Picker Modal / Banner -->
+                        {(!state || !state.loaded || showFileModal) && (
+                            <div className="glass-card" style={{border: '2px solid rgba(56, 189, 248, 0.4)', background: 'rgba(15, 23, 42, 0.95)', padding: '36px', textAlign: 'center'}}>
+                                <i className="fa-solid fa-file-csv" style={{fontSize: '48px', color: '#38bdf8', marginBottom: '16px'}}></i>
+                                <h2 style={{margin: '0 0 8px 0'}}>Load Dataset File</h2>
+                                <p style={{color: '#94a3b8', margin: '0 0 24px 0'}}>Enter the absolute path to your Snowflake CSV or Parquet export on your Mac:</p>
+                                
+                                <div style={{display: 'flex', gap: '12px', maxWidth: '600px', margin: '0 auto'}}>
+                                    <input 
+                                        type="text" 
+                                        placeholder="/path/to/your_snowflake_export.csv" 
+                                        value={inputFilePath}
+                                        onChange={(e) => setInputFilePath(e.target.value)}
+                                        style={{flex: 1, padding: '12px 16px', fontSize: '15px'}}
+                                    />
+                                    <button className="btn-action" onClick={() => handleLoadFile()} disabled={loadingFile}>
+                                        {loadingFile ? <i className="fa-solid fa-spinner fa-spin"></i> : <i className="fa-solid fa-bolt"></i>} Load Dataset
+                                    </button>
+                                </div>
+
+                                {fileError && <p style={{color: '#fb7185', marginTop: '16px', fontWeight: 'bold'}}>{fileError}</p>}
+                                
+                                <div style={{marginTop: '24px', fontSize: '13px', color: '#64748b'}}>
+                                    💡 Quick test sample: <strong>test_synthetic_snowflake.csv</strong> or <strong>test_synthetic_snowflake.parquet</strong>
+                                    <button style={{background: 'none', border: 'none', color: '#38bdf8', cursor: 'pointer', marginLeft: '8px', textDecoration: 'underline'}} onClick={() => handleLoadFile('test_synthetic_snowflake.parquet')}>Load Synthetic Sample</button>
+                                </div>
+                            </div>
+                        )}
                         <!-- File Status -->
                         {state && state.loaded && (
                             <div className="glass-card" style={{padding: '16px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>

@@ -415,12 +415,16 @@ def handle_web(args):
     import uvicorn
     from server import app, init_active_file
     
-    if not os.path.exists(args.file_path):
-        console.print(f"[bold red][!] File not found: {args.file_path}[/bold red]")
-        sys.exit(1)
-        
-    init_active_file(args.file_path, delimiter=args.delimiter)
-    
+    if args.file_path:
+        if not os.path.exists(args.file_path):
+            console.print(f"[bold red][!] File not found: {args.file_path}[/bold red]")
+            sys.exit(1)
+        init_active_file(args.file_path, delimiter=args.delimiter)
+        console.print(f"[bold green][*] Pre-loaded dataset: {args.file_path}[/bold green]")
+    else:
+        console.print(f"[bold cyan][*] Starting Trishula Web without pre-loaded dataset.[/bold cyan]")
+        console.print(f"[dim]You can load any CSV or Parquet file directly inside the browser UI![/dim]")
+
     console.print(f"\n[bold green]🚀 TRISHULA WEB Dashboard Running![/bold green]")
     console.print(f"[bold cyan]👉 Open in browser: http://{args.host}:{args.port}[/bold cyan]\n")
     uvicorn.run(app, host=args.host, port=args.port)
@@ -432,7 +436,7 @@ def main():
 
     # Subcommand: web
     web_p = subparsers.add_parser("web", help="Launch interactive React + Chart.js Web Dashboard")
-    web_p.add_argument("file_path", help="CSV or Parquet filepath")
+    web_p.add_argument("file_path", nargs="?", help="Optional CSV or Parquet filepath to pre-load")
     web_p.add_argument("-d", "--delimiter", default="->", help="Event path separator token")
     web_p.add_argument("-p", "--port", type=int, default=8000, help="Web server port")
     web_p.add_argument("--host", default="127.0.0.1", help="Host address")
