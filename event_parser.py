@@ -3,7 +3,7 @@ import pandas as pd
 import threading
 from typing import List, Dict, Any, Optional
 
-from duckdb_config import create_duckdb_connection
+from duckdb_config import create_duckdb_connection, csv_read_expression
 
 
 def _connect() -> duckdb.DuckDBPyConnection:
@@ -14,7 +14,7 @@ def _get_read_sql(file_path: str) -> str:
     clean_path = file_path.replace("'", "''")
     if file_path.endswith(".parquet") or file_path.endswith(".pq"):
         return f"read_parquet('{clean_path}')"
-    return f"read_csv_auto('{clean_path}', header=True)"
+    return csv_read_expression(file_path)
 
 def _get_split_sql(file_path: str, delimiter: str, dedupe_mode: Optional[str] = None) -> str:
     clean_delim = delimiter.replace("'", "''")

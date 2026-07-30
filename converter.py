@@ -6,7 +6,12 @@ import duckdb
 from typing import Dict, Any
 from pathlib import Path
 
-from duckdb_config import create_duckdb_connection
+from duckdb_config import (
+    MAX_CSV_MAX_LINE_SIZE,
+    create_duckdb_connection,
+    csv_read_expression,
+    get_duckdb_settings,
+)
 from errors import DatasetValidationError
 
 REQUIRED_COLUMNS = {"SESSION", "EVENT_PATH", "TOTAL_EVENTS"}
@@ -23,7 +28,7 @@ def validate_dataset_schema(file_path: str) -> Dict[str, str]:
     read_expr = (
         f"read_parquet('{clean_path}')"
         if file_path.lower().endswith((".parquet", ".pq"))
-        else f"read_csv_auto('{clean_path}', header=True)"
+        else csv_read_expression(file_path)
     )
     try:
         schema = {
@@ -76,7 +81,6 @@ def convert_csv_to_parquet(
     con.execute("PRAGMA preserve_insertion_order=false;")
     
     # Escape single quotes in file paths for SQL execution
-    clean_csv_path = csv_path.replace("'", "''")
     output_path = Path(parquet_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     partial_path = output_path.with_name(
@@ -89,7 +93,7 @@ def convert_csv_to_parquet(
 
     copy_query = f"""
     COPY (
-        SELECT * FROM read_csv_auto('{clean_csv_path}', header=True)
+        SELECT * FROM {csv_read_expression(csv_path)}
     ) TO '{clean_parquet_path}' (
         FORMAT PARQUET,
         COMPRESSION '{compression}',
@@ -103,9 +107,24 @@ def convert_csv_to_parquet(
         os.replace(partial_path, output_path)
     except duckdb.Error as exc:
         partial_path.unlink(missing_ok=True)
+        if "Maximum line size" in str(exc):
+            configured_limit = get_duckdb_settings().csv_max_line_size
+            hint = (
+                "The CSV contains a record larger than the configured "
+                f"TRISHULA_CSV_MAX_LINE_SIZE={configured_limit} bytes. If it "
+                "is a legitimate record, increase the setting up to "
+                f"{MAX_CSV_MAX_LINE_SIZE} bytes. If DuckDB reports a "
+                "single-line file, first verify the export's row delimiters "
+                "and quoting."
+            )
+        else:
+            hint = (
+                "Check quoting, delimiter consistency, encoding, and column "
+                "types near the reported row."
+            )
         raise DatasetValidationError(
             f"CSV conversion failed: {exc}",
-            "Check quoting, delimiter consistency, encoding, and column types near the reported row.",
+            hint,
         ) from exc
     except Exception:
         partial_path.unlink(missing_ok=True)
@@ -152,7 +171,7 @@ def inspect_file(file_path: str, limit: int = 5) -> Dict[str, Any]:
         total_rows = con.execute(f"SELECT COUNT(*) FROM {read_expr}").fetchone()[0]
         sample_df = con.execute(f"SELECT * FROM {read_expr} LIMIT {limit}").fetchdf()
     else:
-        read_expr = f"read_csv_auto('{clean_path}', header=True)"
+        read_expr = csv_read_expression(file_path)
         schema_info = con.execute(f"DESCRIBE SELECT * FROM {read_expr}").fetchall()
         # Fast sample without full 7.2GB CSV row scan
         sample_df = con.execute(f"SELECT * FROM {read_expr} LIMIT {limit}").fetchdf()

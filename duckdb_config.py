@@ -8,6 +8,9 @@ import duckdb
 DEFAULT_DUCKDB_MEMORY_LIMIT = "1GB"
 DEFAULT_DUCKDB_THREADS = 4
 MAX_DUCKDB_THREADS = 64
+DEFAULT_CSV_MAX_LINE_SIZE = 32 * 1024 * 1024
+MIN_CSV_MAX_LINE_SIZE = 2_000_000
+MAX_CSV_MAX_LINE_SIZE = 256 * 1024 * 1024
 _MEMORY_LIMIT_PATTERN = re.compile(
     r"^(\d+(?:\.\d+)?)\s*(B|KB|MB|GB|TB)$",
     re.IGNORECASE,
@@ -18,6 +21,7 @@ _MEMORY_LIMIT_PATTERN = re.compile(
 class DuckDBSettings:
     memory_limit: str
     threads: int
+    csv_max_line_size: int
 
 
 def get_duckdb_settings() -> DuckDBSettings:
@@ -46,7 +50,37 @@ def get_duckdb_settings() -> DuckDBSettings:
             f"1 and {MAX_DUCKDB_THREADS}"
         )
 
-    return DuckDBSettings(memory_limit=memory_limit.upper(), threads=threads)
+    raw_csv_max_line_size = os.getenv(
+        "TRISHULA_CSV_MAX_LINE_SIZE", str(DEFAULT_CSV_MAX_LINE_SIZE)
+    )
+    try:
+        csv_max_line_size = int(raw_csv_max_line_size)
+    except ValueError as exc:
+        raise ValueError(
+            "TRISHULA_CSV_MAX_LINE_SIZE must be an integer number of bytes "
+            f"between {MIN_CSV_MAX_LINE_SIZE} and {MAX_CSV_MAX_LINE_SIZE}"
+        ) from exc
+    if not MIN_CSV_MAX_LINE_SIZE <= csv_max_line_size <= MAX_CSV_MAX_LINE_SIZE:
+        raise ValueError(
+            "TRISHULA_CSV_MAX_LINE_SIZE must be an integer number of bytes "
+            f"between {MIN_CSV_MAX_LINE_SIZE} and {MAX_CSV_MAX_LINE_SIZE}"
+        )
+
+    return DuckDBSettings(
+        memory_limit=memory_limit.upper(),
+        threads=threads,
+        csv_max_line_size=csv_max_line_size,
+    )
+
+
+def csv_read_expression(file_path: str) -> str:
+    """Return a consistently bounded DuckDB CSV reader expression."""
+    clean_path = file_path.replace("'", "''")
+    max_line_size = get_duckdb_settings().csv_max_line_size
+    return (
+        f"read_csv_auto('{clean_path}', header=true, "
+        f"max_line_size={max_line_size})"
+    )
 
 
 def create_duckdb_connection() -> duckdb.DuckDBPyConnection:
