@@ -259,13 +259,13 @@
             </div>
 
             <div class="glass-card">
-                <h2>Required dataset schema</h2>
+                <h2>Dataset semantics</h2>
                 <table>
                     <thead><tr><th>Column</th><th>Purpose</th><th>Example</th></tr></thead>
                     <tbody>
-                        <tr><td><code>SESSION</code></td><td>Session identifier</td><td><code>SESS_123</code></td></tr>
-                        <tr><td><code>EVENT_PATH</code></td><td>Ordered event sequence</td><td><code>Home-&gt;Search-&gt;Checkout</code></td></tr>
-                        <tr><td><code>TOTAL_EVENTS</code></td><td>Numeric session depth</td><td><code>3</code></td></tr>
+                        <tr><td><code>SESSION</code></td><td>Session identifier; semantic variants such as <code>VEHICLESESSION</code> are accepted</td><td><code>SESS_123</code></td></tr>
+                        <tr><td><code>EVENT_PATH</code></td><td>Ordered event sequence; unambiguous headers containing <code>PATH</code> are accepted</td><td><code>Home-&gt;Search-&gt;Checkout</code></td></tr>
+                        <tr><td><code>TOTAL_EVENTS</code></td><td>Numeric session depth; semantic step or event count headers are accepted</td><td><code>3</code></td></tr>
                     </tbody>
                 </table>
                 <p>Supported path delimiters are <code>-&gt;</code>, comma,
@@ -310,7 +310,7 @@ trishula-web --host 127.0.0.1 --port 8000</code></pre>
             <div class="glass-card">
                 <h2>Troubleshooting</h2>
                 <ul>
-                    <li><strong>Missing columns:</strong> export or rename fields to the required uppercase schema.</li>
+                    <li><strong>Missing or ambiguous columns:</strong> keep one session identifier, one path, and one numeric step or event count header. Canonical names take priority.</li>
                     <li><strong>Incorrect funnel counts:</strong> verify delimiter detection and selected dedupe mode.</li>
                     <li><strong>Empty transition matrix:</strong> wait for calculation to finish, then check the displayed status. Sessions containing only one event legitimately have no transitions.</li>
                     <li><strong>Out of memory:</strong> lower <code>TRISHULA_DUCKDB_MEMORY_LIMIT</code> and confirm sufficient temporary disk space.</li>

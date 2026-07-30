@@ -1,9 +1,10 @@
 import os
 
+import re
 import time
 import uuid
 import duckdb
-from typing import Dict, Any
+from typing import Dict, Any, Iterable
 from pathlib import Path
 
 from duckdb_config import (
@@ -14,23 +15,126 @@ from duckdb_config import (
 )
 from errors import DatasetValidationError
 
-REQUIRED_COLUMNS = {"SESSION", "EVENT_PATH", "TOTAL_EVENTS"}
+_COLUMN_ALIASES = {
+    "SESSION": {
+        "SESSION",
+        "SESSIONID",
+        "VEHICLESESSION",
+        "VEHICLESESSIONID",
+    },
+    "EVENT_PATH": {
+        "EVENTPATH",
+        "SESSIONPATH",
+        "SESSIONPATHCAPPEDATTWOREPEATS",
+    },
+    "TOTAL_EVENTS": {
+        "TOTALEVENTS",
+        "EVENTCOUNT",
+        "STEPCOUNT",
+        "STEPCOUNTAFTERREPEATCAP",
+    },
+}
 
 
 def _connect() -> duckdb.DuckDBPyConnection:
     return create_duckdb_connection()
 
 
-def validate_dataset_schema(file_path: str) -> Dict[str, str]:
-    """Validate the columns required by every analyzer operation."""
-    con = _connect()
+def _normalize_column_name(column_name: str) -> str:
+    return re.sub(r"[^A-Z0-9]+", "", column_name.upper())
+
+
+def _is_semantic_column(canonical_name: str, normalized_name: str) -> bool:
+    if normalized_name in _COLUMN_ALIASES[canonical_name]:
+        return True
+    if canonical_name == "SESSION":
+        return normalized_name.endswith("SESSION") and "PATH" not in normalized_name
+    if canonical_name == "EVENT_PATH":
+        return "PATH" in normalized_name
+    return (
+        "COUNT" in normalized_name
+        and ("STEP" in normalized_name or "EVENT" in normalized_name)
+    )
+
+
+def resolve_dataset_columns(column_names: Iterable[str]) -> Dict[str, str]:
+    """Map source headers to the canonical columns used by analytics."""
+    columns = list(column_names)
+    normalized = {column: _normalize_column_name(column) for column in columns}
+    mapping = {}
+    for canonical_name in ("SESSION", "EVENT_PATH", "TOTAL_EVENTS"):
+        exact = [
+            column
+            for column, normalized_name in normalized.items()
+            if normalized_name == _normalize_column_name(canonical_name)
+        ]
+        if len(exact) == 1:
+            mapping[canonical_name] = exact[0]
+            continue
+        candidates = [
+            column
+            for column, normalized_name in normalized.items()
+            if _is_semantic_column(canonical_name, normalized_name)
+        ]
+        if not candidates:
+            raise DatasetValidationError(
+                f"Dataset has no column that can be mapped to {canonical_name}",
+                "Available columns: "
+                + ", ".join(columns)
+                + ". Rename the corresponding header or use a recognized semantic name.",
+            )
+        if len(candidates) > 1:
+            raise DatasetValidationError(
+                f"Dataset has ambiguous columns for {canonical_name}: "
+                + ", ".join(candidates),
+                "Keep one matching header or rename the intended column to "
+                f"{canonical_name}.",
+            )
+        mapping[canonical_name] = candidates[0]
+    return mapping
+
+
+def _quote_identifier(identifier: str) -> str:
+    escaped_identifier = identifier.replace('"', '""')
+    return f'"{escaped_identifier}"'
+
+
+def dataset_read_expression(
+    connection: duckdb.DuckDBPyConnection, file_path: str
+) -> str:
+    """Return a query that exposes arbitrary supported headers canonically."""
     clean_path = file_path.replace("'", "''")
-    read_expr = (
+    base_expression = (
         f"read_parquet('{clean_path}')"
         if file_path.lower().endswith((".parquet", ".pq"))
         else csv_read_expression(file_path)
     )
+    if file_path.lower().endswith((".parquet", ".pq")):
+        return base_expression
+    schema_rows = connection.execute(
+        f"DESCRIBE SELECT * FROM {base_expression}"
+    ).fetchall()
+    columns = [row[0] for row in schema_rows]
+    mapping = resolve_dataset_columns(columns)
+    canonical_by_source = {source: canonical for canonical, source in mapping.items()}
+    projection = []
+    for column in columns:
+        quoted_column = _quote_identifier(column)
+        canonical_name = canonical_by_source.get(column)
+        if canonical_name:
+            projection.append(
+                f"{quoted_column} AS {_quote_identifier(canonical_name)}"
+            )
+        else:
+            projection.append(quoted_column)
+    return f"(SELECT {', '.join(projection)} FROM {base_expression})"
+
+
+def validate_dataset_schema(file_path: str) -> Dict[str, str]:
+    """Validate the columns required by every analyzer operation."""
+    con = _connect()
     try:
+        read_expr = dataset_read_expression(con, file_path)
         schema = {
             row[0]: row[1]
             for row in con.execute(f"DESCRIBE SELECT * FROM {read_expr}").fetchall()
@@ -42,12 +146,6 @@ def validate_dataset_schema(file_path: str) -> Dict[str, str]:
         ) from exc
     finally:
         con.close()
-    missing = sorted(REQUIRED_COLUMNS - schema.keys())
-    if missing:
-        raise DatasetValidationError(
-            f"Dataset is missing required columns: {', '.join(missing)}",
-            "Expected columns are SESSION, EVENT_PATH, and TOTAL_EVENTS.",
-        )
     if not any(
         numeric_type in schema["TOTAL_EVENTS"].upper()
         for numeric_type in ("INT", "DECIMAL", "DOUBLE", "FLOAT")
@@ -91,17 +189,17 @@ def convert_csv_to_parquet(
     print(f"[*] Starting conversion: '{csv_path}' ({csv_size_bytes / (1024**2):.2f} MB)")
     print(f"[*] Output path: '{parquet_path}' (Compression: {compression})")
 
-    copy_query = f"""
-    COPY (
-        SELECT * FROM {csv_read_expression(csv_path)}
-    ) TO '{clean_parquet_path}' (
-        FORMAT PARQUET,
-        COMPRESSION '{compression}',
-        ROW_GROUP_SIZE {row_group_size}
-    );
-    """
-
     try:
+        read_expr = dataset_read_expression(con, csv_path)
+        copy_query = f"""
+        COPY (
+            SELECT * FROM {read_expr}
+        ) TO '{clean_parquet_path}' (
+            FORMAT PARQUET,
+            COMPRESSION '{compression}',
+            ROW_GROUP_SIZE {row_group_size}
+        );
+        """
         con.execute(copy_query)
         validate_dataset_schema(str(partial_path))
         os.replace(partial_path, output_path)

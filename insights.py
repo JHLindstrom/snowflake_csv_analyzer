@@ -2,25 +2,29 @@ import duckdb
 import pandas as pd
 from typing import Dict, Any
 
-from duckdb_config import create_duckdb_connection, csv_read_expression
+from converter import dataset_read_expression
+from duckdb_config import create_duckdb_connection
 
 
 def _connect() -> duckdb.DuckDBPyConnection:
     return create_duckdb_connection()
 
 
-def _get_read_sql(file_path: str) -> str:
-    clean_path = file_path.replace("'", "''")
-    if file_path.endswith(".parquet") or file_path.endswith(".pq"):
-        return f"read_parquet('{clean_path}')"
-    return csv_read_expression(file_path)
+def _get_read_sql(
+    file_path: str, connection: duckdb.DuckDBPyConnection
+) -> str:
+    try:
+        return dataset_read_expression(connection, file_path)
+    except Exception:
+        connection.close()
+        raise
 
 def get_entry_exit_analytics(file_path: str, delimiter: str = "->", top_n: int = 10) -> Dict[str, pd.DataFrame]:
     """
     Analyzes entry events (first event) and exit events (last event) in user sessions directly in DuckDB SQL.
     """
     con = _connect()
-    read_sql = _get_read_sql(file_path)
+    read_sql = _get_read_sql(file_path, con)
     clean_delim = delimiter.replace("'", "''")
     
     # 1. Entry Events (Top N)
@@ -72,7 +76,7 @@ def get_executive_summary_metrics(file_path: str) -> Dict[str, Any]:
     Computes key executive metrics: total sessions, bounce rate, average events per session, and percentiles.
     """
     con = _connect()
-    read_sql = _get_read_sql(file_path)
+    read_sql = _get_read_sql(file_path, con)
     
     query = f"""
     SELECT 
@@ -118,7 +122,7 @@ def get_transition_matrix(
         raise ValueError(f"Unsupported deduplication mode: {dedupe_mode}")
 
     con = _connect()
-    read_sql = _get_read_sql(file_path)
+    read_sql = _get_read_sql(file_path, con)
     clean_delim = delimiter.replace("'", "''")
     filtered_events_expr = {
         "none": "events",
