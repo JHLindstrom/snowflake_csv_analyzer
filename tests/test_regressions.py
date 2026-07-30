@@ -15,7 +15,11 @@ from starlette.requests import Request
 import server
 import event_parser
 from converter import convert_csv_to_parquet, validate_dataset_schema
-from duckdb_config import create_duckdb_connection, get_duckdb_settings
+from duckdb_config import (
+    create_duckdb_connection,
+    get_config_path,
+    get_duckdb_settings,
+)
 from errors import DatasetValidationError
 from event_parser import (
     calculate_funnel,
@@ -147,6 +151,54 @@ def test_duckdb_resource_settings_apply_to_connections(monkeypatch):
         )
     finally:
         connection.close()
+
+
+def test_duckdb_settings_load_from_local_config(tmp_path, monkeypatch):
+    config_path = tmp_path / "trishula.ini"
+    config_path.write_text(
+        "[duckdb]\nmemory_limit = 4GB\nthreads = 3\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("TRISHULA_CONFIG_FILE", raising=False)
+    monkeypatch.delenv("TRISHULA_DUCKDB_MEMORY_LIMIT", raising=False)
+    monkeypatch.delenv("TRISHULA_DUCKDB_THREADS", raising=False)
+
+    assert get_config_path() == config_path
+    assert get_duckdb_settings().memory_limit == "4GB"
+    assert get_duckdb_settings().threads == 3
+
+
+def test_duckdb_environment_overrides_local_config(tmp_path, monkeypatch):
+    config_path = tmp_path / "trishula.ini"
+    config_path.write_text(
+        "[duckdb]\nmemory_limit = 2GB\nthreads = 2\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("TRISHULA_DUCKDB_MEMORY_LIMIT", "4GB")
+    monkeypatch.setenv("TRISHULA_DUCKDB_THREADS", "4")
+
+    assert get_duckdb_settings().memory_limit == "4GB"
+    assert get_duckdb_settings().threads == 4
+
+
+def test_duckdb_explicit_config_path_must_exist(tmp_path, monkeypatch):
+    missing = tmp_path / "missing.ini"
+    monkeypatch.setenv("TRISHULA_CONFIG_FILE", str(missing))
+    with pytest.raises(ValueError, match="does not point to a readable file"):
+        get_duckdb_settings()
+
+
+def test_duckdb_config_rejects_unknown_keys(tmp_path, monkeypatch):
+    config_path = tmp_path / "trishula.ini"
+    config_path.write_text(
+        "[duckdb]\nmemory_limit = 1GB\nthreadz = 4\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TRISHULA_CONFIG_FILE", str(config_path))
+    with pytest.raises(ValueError, match="Unknown \\[duckdb\\] settings"):
+        get_duckdb_settings()
 
 
 @pytest.mark.parametrize("value", ["0", "-1", "1.5", "many", "65"])
@@ -703,6 +755,8 @@ def test_readme_has_no_removed_architecture_or_unverified_performance_claims():
     assert all(claim not in readme for claim in stale_claims)
     assert "Help & How-to" in readme
     assert "single-user localhost" in readme
+    assert "[duckdb]" in readme
+    assert "trishula.ini" in readme
 
 
 def test_application_and_package_versions_match():

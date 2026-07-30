@@ -1,6 +1,8 @@
+import configparser
 import os
 import re
 from dataclasses import dataclass
+from pathlib import Path
 
 import duckdb
 
@@ -11,6 +13,9 @@ MAX_DUCKDB_THREADS = 64
 DEFAULT_CSV_MAX_LINE_SIZE = 32 * 1024 * 1024
 MIN_CSV_MAX_LINE_SIZE = 2_000_000
 MAX_CSV_MAX_LINE_SIZE = 256 * 1024 * 1024
+DEFAULT_CONFIG_FILENAME = "trishula.ini"
+CONFIG_FILE_ENV = "TRISHULA_CONFIG_FILE"
+_DUCKDB_CONFIG_KEYS = {"memory_limit", "threads"}
 _MEMORY_LIMIT_PATTERN = re.compile(
     r"^(\d+(?:\.\d+)?)\s*(B|KB|MB|GB|TB)$",
     re.IGNORECASE,
@@ -24,9 +29,47 @@ class DuckDBSettings:
     csv_max_line_size: int
 
 
+def get_config_path() -> Path:
+    configured_path = os.getenv(CONFIG_FILE_ENV)
+    if configured_path:
+        return Path(configured_path).expanduser()
+    return Path.cwd() / DEFAULT_CONFIG_FILENAME
+
+
+def _read_duckdb_config() -> dict[str, str]:
+    config_path = get_config_path()
+    if not config_path.is_file():
+        if os.getenv(CONFIG_FILE_ENV):
+            raise ValueError(
+                f"{CONFIG_FILE_ENV} does not point to a readable file: {config_path}"
+            )
+        return {}
+
+    parser = configparser.ConfigParser(interpolation=None)
+    try:
+        with config_path.open(encoding="utf-8") as config_stream:
+            parser.read_file(config_stream)
+    except (OSError, configparser.Error) as exc:
+        raise ValueError(f"Could not read Trishula config file {config_path}: {exc}") from exc
+
+    if not parser.has_section("duckdb"):
+        raise ValueError(
+            f"Trishula config file {config_path} must contain a [duckdb] section"
+        )
+    values = dict(parser.items("duckdb"))
+    unknown_keys = sorted(values.keys() - _DUCKDB_CONFIG_KEYS)
+    if unknown_keys:
+        raise ValueError(
+            f"Unknown [duckdb] settings in {config_path}: {', '.join(unknown_keys)}"
+        )
+    return values
+
+
 def get_duckdb_settings() -> DuckDBSettings:
+    config_values = _read_duckdb_config()
     memory_limit = os.getenv(
-        "TRISHULA_DUCKDB_MEMORY_LIMIT", DEFAULT_DUCKDB_MEMORY_LIMIT
+        "TRISHULA_DUCKDB_MEMORY_LIMIT",
+        config_values.get("memory_limit", DEFAULT_DUCKDB_MEMORY_LIMIT),
     ).strip()
     memory_match = _MEMORY_LIMIT_PATTERN.fullmatch(memory_limit)
     if not memory_match or float(memory_match.group(1)) <= 0:
@@ -36,7 +79,10 @@ def get_duckdb_settings() -> DuckDBSettings:
         )
     memory_limit = f"{memory_match.group(1)}{memory_match.group(2)}"
 
-    raw_threads = os.getenv("TRISHULA_DUCKDB_THREADS", str(DEFAULT_DUCKDB_THREADS))
+    raw_threads = os.getenv(
+        "TRISHULA_DUCKDB_THREADS",
+        config_values.get("threads", str(DEFAULT_DUCKDB_THREADS)),
+    )
     try:
         threads = int(raw_threads)
     except ValueError as exc:
