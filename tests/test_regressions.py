@@ -399,6 +399,12 @@ def test_browser_upload_is_the_only_dataset_loading_workflow():
     assert "Upload CSV/Parquet" in html
     assert "heatmapStatus" in html
     assert "Calculating transition matrix" in html
+    assert 'id="sankeyStatus"' in html
+    assert 'id="sankeyChart"' in html
+    assert "Building Sankey Flow" in html
+    assert "links.slice(0, 24)" in html
+    assert "document.createElementNS" in html
+    assert "fetch(`/api/heatmap?top=10&dedupe=${dedupe}`)" in html
     assert "Open Finder Window" not in html
     assert "ENTER LOCAL FILE PATH" not in html
     assert "Load Synthetic Sample" not in html
@@ -414,6 +420,8 @@ def test_dashboard_loads_only_the_active_tab_on_startup():
     assert "loadTabData(activeTab)" in dashboard
     assert "if (tabLoadPromises.has(tabName))" in dashboard
     assert "loadedTabs.delete('heatmap')" in dashboard
+    assert "loadedTabs.delete('sankey')" in dashboard
+    assert "sankey: loadSankey" in dashboard
 
 
 def test_analytics_query_slot_serializes_concurrent_work(monkeypatch):

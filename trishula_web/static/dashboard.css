@@ -319,6 +319,34 @@
         }
         .tab-panel { display: none; }
         .tab-panel.active { display: block; }
+        .sankey-chart {
+            margin-top: 18px;
+            min-height: 420px;
+            overflow-x: auto;
+            width: 100%;
+        }
+        .sankey-chart svg {
+            display: block;
+            min-width: 900px;
+            width: 100%;
+        }
+        .sankey-link {
+            fill: none;
+            opacity: 0.38;
+            transition: opacity 160ms ease;
+        }
+        .sankey-link:hover {
+            opacity: 0.82;
+        }
+        .sankey-node {
+            stroke: rgba(255, 255, 255, 0.42);
+            stroke-width: 1;
+        }
+        .sankey-label {
+            fill: #e2e8f0;
+            font-size: 12px;
+            font-weight: 700;
+        }
         .loading-overlay {
             align-items: center;
             background: rgba(3, 7, 18, 0.7);
