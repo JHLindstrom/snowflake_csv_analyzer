@@ -350,6 +350,55 @@ def test_schema_validation_rejects_missing_required_columns(tmp_path):
         validate_dataset_schema(str(dataset))
 
 
+def test_semantic_csv_headers_are_mapped_for_conversion_and_analytics(tmp_path):
+    csv_path = tmp_path / "vehicle-sessions.csv"
+    parquet_path = tmp_path / "vehicle-sessions.parquet"
+    with csv_path.open("w", newline="", encoding="utf-8") as stream:
+        writer = csv.writer(stream)
+        writer.writerow(
+            [
+                "VEHICLESESSION",
+                "STEP_COUNT_AFTER_REPEAT_CAP",
+                "SESSION_PATH_CAPPED_AT_TWO_REPEATS",
+                "VEHICLE_TYPE",
+            ]
+        )
+        writer.writerow(["vehicle-1", 3, "Start->Drive->Stop", "car"])
+
+    result = convert_csv_to_parquet(str(csv_path), str(parquet_path))
+    frequencies = get_event_frequencies(str(csv_path), top_n=10)
+
+    connection = duckdb.connect()
+    try:
+        row = connection.execute(
+            f"""
+            SELECT SESSION, EVENT_PATH, TOTAL_EVENTS, VEHICLE_TYPE
+            FROM read_parquet('{parquet_path}')
+            """
+        ).fetchone()
+    finally:
+        connection.close()
+
+    assert result["row_count"] == 1
+    assert row == ("vehicle-1", "Start->Drive->Stop", 3, "car")
+    assert set(frequencies["event_name"]) == {"Start", "Drive", "Stop"}
+
+
+def test_semantic_csv_headers_reject_ambiguous_session_columns(tmp_path):
+    dataset = tmp_path / "ambiguous.csv"
+    dataset.write_text(
+        "VEHICLESESSION,USER_SESSION,STEP_COUNT_AFTER_REPEAT_CAP,"
+        "SESSION_PATH_CAPPED_AT_TWO_REPEATS\n"
+        "vehicle-1,user-1,2,Start->Stop\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        DatasetValidationError, match="ambiguous columns for SESSION"
+    ):
+        validate_dataset_schema(str(dataset))
+
+
 def test_dataset_state_is_isolated_between_browser_sessions(event_dataset):
     first_id = "first"
     second_id = "second"
@@ -511,7 +560,8 @@ def test_dashboard_includes_task_focused_help():
     dashboard = _dashboard_source(request)
     assert "Help &amp; How-to" not in dashboard
     assert "Help & How-to" in dashboard
-    assert "Required dataset schema" in dashboard
+    assert "Dataset semantics" in dashboard
+    assert "VEHICLESESSION" in dashboard
     assert "Dedupe and funnel semantics" in dashboard
     assert "Unload Dataset" in dashboard
     assert "Troubleshooting" in dashboard

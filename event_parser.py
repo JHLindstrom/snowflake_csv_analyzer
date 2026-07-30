@@ -3,18 +3,22 @@ import pandas as pd
 import threading
 from typing import List, Dict, Any, Optional
 
-from duckdb_config import create_duckdb_connection, csv_read_expression
+from converter import dataset_read_expression
+from duckdb_config import create_duckdb_connection
 
 
 def _connect() -> duckdb.DuckDBPyConnection:
     return create_duckdb_connection()
 
 
-def _get_read_sql(file_path: str) -> str:
-    clean_path = file_path.replace("'", "''")
-    if file_path.endswith(".parquet") or file_path.endswith(".pq"):
-        return f"read_parquet('{clean_path}')"
-    return csv_read_expression(file_path)
+def _get_read_sql(
+    file_path: str, connection: duckdb.DuckDBPyConnection
+) -> str:
+    try:
+        return dataset_read_expression(connection, file_path)
+    except Exception:
+        connection.close()
+        raise
 
 def _get_split_sql(file_path: str, delimiter: str, dedupe_mode: Optional[str] = None) -> str:
     clean_delim = delimiter.replace("'", "''")
@@ -29,7 +33,7 @@ def detect_delimiter(file_path: str) -> str:
     """
     try:
         con = _connect()
-        read_sql = _get_read_sql(file_path)
+        read_sql = _get_read_sql(file_path, con)
         sample = con.execute(f"SELECT EVENT_PATH FROM {read_sql} WHERE EVENT_PATH IS NOT NULL AND trim(EVENT_PATH) != '' LIMIT 10").fetchall()
         con.close()
         
@@ -83,7 +87,7 @@ def get_event_frequencies(file_path: str, delimiter: str = "->", top_n: int = 20
     Unnests EVENT_PATH by delimiter and calculates individual event frequencies.
     """
     con = _connect()
-    read_sql = _get_read_sql(file_path)
+    read_sql = _get_read_sql(file_path, con)
     clean_delim = delimiter.replace("'", "''")
     mode = dedupe_mode or "none"
     index_filter = ""
@@ -153,7 +157,7 @@ def get_top_paths(
     Ranks the most frequent full user navigation paths in high-speed DuckDB SQL.
     """
     con = _connect()
-    read_sql = _get_read_sql(file_path)
+    read_sql = _get_read_sql(file_path, con)
     path_expr = "EVENT_PATH"
     if dedupe_mode and dedupe_mode != "none":
         path_expr = sanitize_event_path_sql("EVENT_PATH", delimiter=delimiter, mode=dedupe_mode)
@@ -179,7 +183,7 @@ def get_transition_pairs(file_path: str, delimiter: str = "->", top_n: int = 20,
     Calculates step-to-step event transition pairs (e.g. Step A -> Step B).
     """
     con = _connect()
-    read_sql = _get_read_sql(file_path)
+    read_sql = _get_read_sql(file_path, con)
     clean_delim = delimiter.replace("'", "''")
     path_expr = "EVENT_PATH"
     if dedupe_mode and dedupe_mode != "none":
@@ -255,7 +259,8 @@ def calculate_funnel(
     if not active_steps:
         return pd.DataFrame()
 
-    read_sql = _get_read_sql(file_path)
+    con = _connect()
+    read_sql = _get_read_sql(file_path, con)
     clean_delim = delimiter.replace("'", "''")
     raw_events = (
         f"list_transform(string_split(EVENT_PATH, '{clean_delim}'), "
@@ -332,7 +337,6 @@ def calculate_funnel(
         + ",\n".join(count_expressions)
         + f"\nFROM {final_cte};"
     )
-    con = _connect()
     try:
         result = con.execute(sql).fetchone()
     finally:
@@ -379,7 +383,7 @@ def search_sessions(
     Searches sessions containing specific events or subpaths.
     """
     con = _connect()
-    read_sql = _get_read_sql(file_path)
+    read_sql = _get_read_sql(file_path, con)
     
     where_clauses = [f"TOTAL_EVENTS >= {min_events}"]
     clean_delimiter = delimiter.replace("'", "''")
@@ -422,7 +426,7 @@ def run_custom_query(
     con = _connect()
     if connection_callback:
         connection_callback(con)
-    read_sql = _get_read_sql(file_path)
+    read_sql = _get_read_sql(file_path, con)
     
     con.execute(f"CREATE VIEW data AS SELECT * FROM {read_sql}")
     timer = None

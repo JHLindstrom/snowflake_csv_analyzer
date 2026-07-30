@@ -114,7 +114,8 @@ def test_primary_browser_journey(live_server):
         )
 
         page.get_by_role("button", name="❓ Help & How-to").click()
-        expect(page.get_by_role("heading", name="Required dataset schema")).to_be_visible()
+        expect(page.get_by_role("heading", name="Dataset semantics")).to_be_visible()
+        expect(page.get_by_text("VEHICLESESSION", exact=True)).to_be_visible()
         expect(page.locator("#panel-help")).to_have_class(re.compile(r"\bactive\b"))
         with page.expect_download(timeout=20_000) as download_info:
             page.get_by_role(

@@ -260,6 +260,14 @@ paths are never used as destination paths. Each browser receives an isolated
 dataset session through an HttpOnly, same-site cookie. Expired sessions and
 their managed upload files are removed automatically.
 
+CSV headers are mapped by meaning rather than position. Canonical
+`SESSION`, `EVENT_PATH`, and `TOTAL_EVENTS` headers continue to work, while
+unambiguous semantic variants are normalized during conversion. For example,
+`VEHICLESESSION`, `SESSION_PATH_CAPPED_AT_TWO_REPEATS`, and
+`STEP_COUNT_AFTER_REPEAT_CAP` map to the canonical analytics columns.
+Unrelated columns are preserved. Files with missing or ambiguous semantic
+columns are rejected instead of being guessed.
+
 The web implementation is split by responsibility: `server.py` owns FastAPI
 routes and application state, while `trishula_web/templates/` and
 `trishula_web/static/` contain the dashboard shell, stylesheet, and browser
