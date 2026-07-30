@@ -213,6 +213,7 @@
                     overview: 'Executive KPIs',
                     funnel: 'Funnel Retention',
                     heatmap: 'Transition Matrix',
+                    sankey: 'Sankey Flow',
                     search: 'Session Explorer',
                     help: 'Help & How-to'
                 };
@@ -319,7 +320,8 @@
             if (stateData && stateData.loaded) {
                 loadedTabs.delete('funnel');
                 loadedTabs.delete('heatmap');
-                if (activeTab === 'funnel' || activeTab === 'heatmap') {
+                loadedTabs.delete('sankey');
+                if (activeTab === 'funnel' || activeTab === 'heatmap' || activeTab === 'sankey') {
                     loadTabData(activeTab, true);
                 }
             }
@@ -344,6 +346,7 @@
                 overview: loadInsights,
                 funnel: loadEvents,
                 heatmap: loadHeatmap,
+                sankey: loadSankey,
                 search: runSearch
             };
             const loader = loaders[tabName];
@@ -635,6 +638,161 @@
             } catch (err) {
                 status.style.color = '#fb7185';
                 status.textContent = `Unable to load transition matrix: ${err.message}`;
+            } finally {
+                await loading.finish();
+            }
+        }
+
+        function createSvgElement(name, attributes = {}) {
+            const element = document.createElementNS('http://www.w3.org/2000/svg', name);
+            Object.entries(attributes).forEach(([key, value]) => element.setAttribute(key, String(value)));
+            return element;
+        }
+
+        function renderSankey(matrix) {
+            const chart = document.getElementById('sankeyChart');
+            chart.replaceChildren();
+
+            const links = [];
+            matrix.index.forEach((source, sourceIndex) => {
+                matrix.columns.forEach((target, targetIndex) => {
+                    const value = Number(matrix.data[sourceIndex]?.[targetIndex] || 0);
+                    if (value > 0) links.push({source, target, value});
+                });
+            });
+            links.sort((left, right) => right.value - left.value);
+            const strongestLinks = links.slice(0, 24);
+            if (!strongestLinks.length) return 0;
+
+            const sourceNames = [...new Set(strongestLinks.map(link => link.source))];
+            const targetNames = [...new Set(strongestLinks.map(link => link.target))];
+            const sourceTotals = new Map(sourceNames.map(name => [name, 0]));
+            const targetTotals = new Map(targetNames.map(name => [name, 0]));
+            strongestLinks.forEach(link => {
+                sourceTotals.set(link.source, sourceTotals.get(link.source) + link.value);
+                targetTotals.set(link.target, targetTotals.get(link.target) + link.value);
+            });
+
+            const width = 1100;
+            const height = 600;
+            const top = 24;
+            const bottom = 24;
+            const gap = 12;
+            const sourceX = 210;
+            const targetX = 890;
+            const nodeWidth = 18;
+            const availableHeight = height - top - bottom;
+            const totalFlow = strongestLinks.reduce((sum, link) => sum + link.value, 0);
+            const sourceScale = (availableHeight - gap * Math.max(0, sourceNames.length - 1)) / totalFlow;
+            const targetScale = (availableHeight - gap * Math.max(0, targetNames.length - 1)) / totalFlow;
+            const scale = Math.max(0, Math.min(sourceScale, targetScale));
+            const palette = ['#38bdf8', '#818cf8', '#34d399', '#fbbf24', '#fb7185', '#22d3ee', '#c084fc', '#4ade80', '#f97316', '#60a5fa'];
+
+            function positionNodes(names, totals) {
+                const usedHeight = names.reduce((sum, name) => sum + totals.get(name) * scale, 0)
+                    + gap * Math.max(0, names.length - 1);
+                let cursor = top + Math.max(0, (availableHeight - usedHeight) / 2);
+                return new Map(names.map(name => {
+                    const node = {name, y: cursor, height: totals.get(name) * scale, offset: 0};
+                    cursor += node.height + gap;
+                    return [name, node];
+                }));
+            }
+
+            const sources = positionNodes(sourceNames, sourceTotals);
+            const targets = positionNodes(targetNames, targetTotals);
+            const svg = createSvgElement('svg', {
+                viewBox: `0 0 ${width} ${height}`,
+                role: 'img',
+                'aria-labelledby': 'sankeySvgTitle sankeySvgDescription'
+            });
+            const title = createSvgElement('title', {id: 'sankeySvgTitle'});
+            title.textContent = 'Event transition Sankey diagram';
+            const description = createSvgElement('desc', {id: 'sankeySvgDescription'});
+            description.textContent = `${strongestLinks.length} strongest event transitions. Link width represents transition count.`;
+            svg.append(title, description);
+
+            strongestLinks.forEach((link, index) => {
+                const source = sources.get(link.source);
+                const target = targets.get(link.target);
+                const linkWidth = link.value * scale;
+                const sourceY = source.y + source.offset + linkWidth / 2;
+                const targetY = target.y + target.offset + linkWidth / 2;
+                source.offset += linkWidth;
+                target.offset += linkWidth;
+                const path = createSvgElement('path', {
+                    d: `M ${sourceX + nodeWidth} ${sourceY} C 520 ${sourceY}, 580 ${targetY}, ${targetX} ${targetY}`,
+                    stroke: palette[sourceNames.indexOf(link.source) % palette.length],
+                    'stroke-width': Math.max(1, linkWidth),
+                    class: 'sankey-link'
+                });
+                const pathTitle = createSvgElement('title');
+                pathTitle.textContent = `${link.source} → ${link.target}: ${link.value.toLocaleString()} transitions`;
+                path.appendChild(pathTitle);
+                svg.appendChild(path);
+            });
+
+            function appendNodes(nodes, x, names, labelSide) {
+                names.forEach((name, index) => {
+                    const node = nodes.get(name);
+                    const color = labelSide === 'source'
+                        ? palette[index % palette.length]
+                        : '#a5b4fc';
+                    const rect = createSvgElement('rect', {
+                        x,
+                        y: node.y,
+                        width: nodeWidth,
+                        height: Math.max(1, node.height),
+                        rx: 3,
+                        fill: color,
+                        class: 'sankey-node'
+                    });
+                    const label = createSvgElement('text', {
+                        x: labelSide === 'source' ? x - 10 : x + nodeWidth + 10,
+                        y: node.y + Math.max(10, node.height / 2 + 4),
+                        'text-anchor': labelSide === 'source' ? 'end' : 'start',
+                        class: 'sankey-label'
+                    });
+                    label.textContent = name;
+                    svg.append(rect, label);
+                });
+            }
+
+            appendNodes(sources, sourceX, sourceNames, 'source');
+            appendNodes(targets, targetX, targetNames, 'target');
+            chart.appendChild(svg);
+            return strongestLinks.length;
+        }
+
+        async function loadSankey() {
+            const dedupe = document.getElementById('dedupeSelect').value;
+            const status = document.getElementById('sankeyStatus');
+            const chart = document.getElementById('sankeyChart');
+            const loading = startLoading({
+                title: 'Building Sankey Flow',
+                stage: 'Ranking the strongest event-to-event transitions…'
+            });
+            status.style.color = '#94a3b8';
+            status.textContent = 'Calculating Sankey flow…';
+            chart.replaceChildren();
+            try {
+                const res = await fetch(`/api/heatmap?top=10&dedupe=${dedupe}`);
+                const contentType = res.headers.get('content-type') || '';
+                const data = contentType.includes('application/json')
+                    ? await res.json()
+                    : {detail: await res.text()};
+                if (!res.ok) throw new Error(data.detail || 'Sankey calculation failed');
+                if (!data.columns?.length || !data.index?.length || !data.data?.length) {
+                    status.textContent = 'No events are available for a Sankey diagram.';
+                    return;
+                }
+                const linkCount = renderSankey(data);
+                status.textContent = linkCount
+                    ? `Showing the ${linkCount} strongest transitions. Hover a link for its exact count.`
+                    : 'Events were found, but there are no transitions between them.';
+            } catch (err) {
+                status.style.color = '#fb7185';
+                status.textContent = `Unable to load Sankey flow: ${err.message}`;
             } finally {
                 await loading.finish();
             }

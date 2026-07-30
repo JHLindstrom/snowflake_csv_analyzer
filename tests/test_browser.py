@@ -113,6 +113,10 @@ def test_primary_browser_journey(live_server):
             0, timeout=20_000
         )
 
+        page.get_by_role("button", name="🌊 Sankey Flow").click()
+        expect(page.locator("#sankeyChart svg")).to_be_visible(timeout=20_000)
+        expect(page.locator("#sankeyChart .sankey-link")).not_to_have_count(0)
+
         page.get_by_role("button", name="❓ Help & How-to").click()
         expect(page.get_by_role("heading", name="Required dataset schema")).to_be_visible()
         expect(page.locator("#panel-help")).to_have_class(re.compile(r"\bactive\b"))

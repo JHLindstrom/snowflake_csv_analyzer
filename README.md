@@ -273,6 +273,11 @@ benchmarking the largest expected export on the target workstation. Requests
 that cannot enter the gate within `TRISHULA_ANALYTICS_QUEUE_TIMEOUT_SECONDS`
 return HTTP 503 instead of waiting indefinitely.
 
+The Sankey Flow tab reuses the bounded transition-matrix calculation and
+renders the 24 strongest links among the 10 most frequent events. Source and
+destination stages are displayed separately so repeated events and cyclic
+journeys remain readable without adding another DuckDB query type.
+
 Every DuckDB connection uses `TRISHULA_DUCKDB_THREADS=4` by default. Lower it
 to reduce CPU pressure and keep the workstation responsive, or raise it only
 after benchmarking representative exports. Valid values are integers from 1

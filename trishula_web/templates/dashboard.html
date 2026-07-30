@@ -17,6 +17,7 @@
             <button class="nav-btn active" data-tab="overview">📊 Executive KPIs</button>
             <button class="nav-btn" data-tab="funnel">🎛️ Funnel Retention</button>
             <button class="nav-btn" data-tab="heatmap">🔥 Transition Matrix</button>
+            <button class="nav-btn" data-tab="sankey">🌊 Sankey Flow</button>
             <button class="nav-btn" data-tab="search">🔎 Session Explorer</button>
         </div>
         <div class="nav-actions">
@@ -179,7 +180,24 @@
             </div>
         </div>
 
-        <!-- Tab 4: Session Explorer -->
+        <!-- Tab 4: Sankey Flow -->
+        <div id="panel-sankey" class="tab-panel">
+            <div class="glass-card">
+                <h3 style="color: #a5b4fc;">Event Transition Sankey</h3>
+                <p style="color: #94a3b8; font-size: 14px;">
+                    The 24 strongest transitions among the 10 most frequent
+                    events. Link width represents transition count; source and
+                    destination stages are separated so repeated or cyclic
+                    journeys remain readable.
+                </p>
+                <div id="sankeyStatus" role="status" aria-live="polite" style="color: #94a3b8; margin-top: 16px;">
+                    Open this tab to calculate transition flow.
+                </div>
+                <div id="sankeyChart" class="sankey-chart" aria-label="Event transition Sankey diagram"></div>
+            </div>
+        </div>
+
+        <!-- Tab 5: Session Explorer -->
         <div id="panel-search" class="tab-panel">
             <!-- Explanatory Box -->
             <div class="info-box">
@@ -220,7 +238,7 @@
             </div>
         </div>
 
-        <!-- Tab 5: Help and How-to -->
+        <!-- Tab 6: Help and How-to -->
         <div id="panel-help" class="tab-panel">
             <div class="info-box">
                 <strong>Localhost support model:</strong> Trishula is designed
@@ -234,6 +252,7 @@
                     <li>Select a CSV or Parquet file with <strong>Upload CSV/Parquet</strong>.</li>
                     <li>Confirm the active filename, managed size, and free disk space.</li>
                     <li>Review Executive KPIs, then build an ordered funnel or inspect transitions.</li>
+                    <li>Use Sankey Flow to compare the strongest event-to-event movements by volume.</li>
                     <li>Use Session Explorer for exact event-token and contiguous-subpath searches.</li>
                     <li>Export only the visible analysis with <strong>Export Selected Tab to PDF</strong>, or unload the dataset when finished.</li>
                 </ol>
