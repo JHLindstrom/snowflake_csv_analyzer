@@ -242,6 +242,7 @@ Optional web configuration:
 export TRISHULA_MAX_UPLOAD_BYTES=10737418240  # 10 GiB
 export TRISHULA_DUCKDB_MEMORY_LIMIT=1GB
 export TRISHULA_DUCKDB_THREADS=4
+export TRISHULA_CSV_MAX_LINE_SIZE=33554432  # 32 MiB per CSV record
 export TRISHULA_MAX_CONCURRENT_ANALYTICS=1
 export TRISHULA_ANALYTICS_QUEUE_TIMEOUT_SECONDS=30
 export TRISHULA_QUERY_TIMEOUT_SECONDS=30
@@ -277,6 +278,11 @@ to reduce CPU pressure and keep the workstation responsive, or raise it only
 after benchmarking representative exports. Valid values are integers from 1
 through 64. `TRISHULA_DUCKDB_MEMORY_LIMIT` accepts sizes such as `512MB`, `1GB`,
 or `4GB`; invalid resource settings fail with a clear configuration error.
+CSV records may be up to 32 MiB by default. Set
+`TRISHULA_CSV_MAX_LINE_SIZE` to an integer number of bytes between 2,000,000
+and 268,435,456 when a legitimate export contains larger records. Do not raise
+it merely to accept a file detected as single-line; first verify that export's
+row delimiters and quoting.
 The active limits are shown in the dataset banner.
 
 The dashboard reports free disk space and managed dataset size. “Unload

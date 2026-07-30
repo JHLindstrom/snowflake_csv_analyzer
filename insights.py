@@ -2,7 +2,7 @@ import duckdb
 import pandas as pd
 from typing import Dict, Any
 
-from duckdb_config import create_duckdb_connection
+from duckdb_config import create_duckdb_connection, csv_read_expression
 
 
 def _connect() -> duckdb.DuckDBPyConnection:
@@ -13,7 +13,7 @@ def _get_read_sql(file_path: str) -> str:
     clean_path = file_path.replace("'", "''")
     if file_path.endswith(".parquet") or file_path.endswith(".pq"):
         return f"read_parquet('{clean_path}')"
-    return f"read_csv_auto('{clean_path}', header=True)"
+    return csv_read_expression(file_path)
 
 def get_entry_exit_analytics(file_path: str, delimiter: str = "->", top_n: int = 10) -> Dict[str, pd.DataFrame]:
     """

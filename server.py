@@ -490,6 +490,7 @@ def get_state():
         "file_size_mb": round(os.path.getsize(state.parquet_file) / (1024**2), 2),
         "duckdb_memory_limit": duckdb_settings.memory_limit,
         "duckdb_threads": duckdb_settings.threads,
+        "csv_max_line_size": duckdb_settings.csv_max_line_size,
     }
 
 

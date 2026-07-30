@@ -16,6 +16,7 @@ import server
 import event_parser
 from converter import convert_csv_to_parquet, validate_dataset_schema
 from duckdb_config import create_duckdb_connection, get_duckdb_settings
+from errors import DatasetValidationError
 from event_parser import (
     calculate_funnel,
     get_event_frequencies,
@@ -126,12 +127,14 @@ def test_event_frequencies_honor_consecutive_and_unique_deduplication(event_data
 def test_duckdb_resource_settings_apply_to_connections(monkeypatch):
     monkeypatch.setenv("TRISHULA_DUCKDB_MEMORY_LIMIT", "512MB")
     monkeypatch.setenv("TRISHULA_DUCKDB_THREADS", "2")
+    monkeypatch.setenv("TRISHULA_CSV_MAX_LINE_SIZE", "33554432")
 
     settings = get_duckdb_settings()
     connection = create_duckdb_connection()
     try:
         assert settings.memory_limit == "512MB"
         assert settings.threads == 2
+        assert settings.csv_max_line_size == 33554432
         assert (
             connection.execute(
                 "SELECT current_setting('memory_limit')"
@@ -160,6 +163,46 @@ def test_duckdb_memory_setting_rejects_invalid_values(monkeypatch, value):
     monkeypatch.setenv("TRISHULA_DUCKDB_MEMORY_LIMIT", value)
     with pytest.raises(ValueError, match="TRISHULA_DUCKDB_MEMORY_LIMIT"):
         get_duckdb_settings()
+
+
+@pytest.mark.parametrize(
+    "value", ["", "1999999", "268435457", "64MB", "1; DROP TABLE data"]
+)
+def test_csv_max_line_size_rejects_invalid_values(monkeypatch, value):
+    monkeypatch.setenv("TRISHULA_CSV_MAX_LINE_SIZE", value)
+    with pytest.raises(ValueError, match="TRISHULA_CSV_MAX_LINE_SIZE"):
+        get_duckdb_settings()
+
+
+def test_csv_conversion_accepts_record_larger_than_duckdb_default(tmp_path):
+    csv_path = tmp_path / "large-record.csv"
+    parquet_path = tmp_path / "large-record.parquet"
+    with csv_path.open("w", newline="", encoding="utf-8") as stream:
+        writer = csv.writer(stream)
+        writer.writerow(["SESSION", "EVENT_PATH", "TOTAL_EVENTS"])
+        writer.writerow(["large", "A" * 2_100_000, 1])
+
+    result = convert_csv_to_parquet(str(csv_path), str(parquet_path))
+
+    assert result["row_count"] == 1
+    assert parquet_path.exists()
+
+
+def test_csv_conversion_explains_configured_line_limit(tmp_path, monkeypatch):
+    csv_path = tmp_path / "oversized-record.csv"
+    parquet_path = tmp_path / "oversized-record.parquet"
+    with csv_path.open("w", newline="", encoding="utf-8") as stream:
+        writer = csv.writer(stream)
+        writer.writerow(["SESSION", "EVENT_PATH", "TOTAL_EVENTS"])
+        writer.writerow(["large", "A" * 2_100_000, 1])
+    monkeypatch.setenv("TRISHULA_CSV_MAX_LINE_SIZE", "2000000")
+
+    with pytest.raises(
+        DatasetValidationError, match="TRISHULA_CSV_MAX_LINE_SIZE=2000000"
+    ):
+        convert_csv_to_parquet(str(csv_path), str(parquet_path))
+
+    assert not parquet_path.exists()
 
 
 def test_transition_counts_are_exact_and_dedupe_sensitive(event_dataset):
